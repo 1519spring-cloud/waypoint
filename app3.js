@@ -236,6 +236,18 @@ function renderProgress() {
       <div class="legend"><span><i style="background:var(--muted)"></i>daily weigh-in</span><span><i style="background:var(--accent)"></i>trend</span></div>
       ${now && m4 ? `<p class="small">Last 4 weeks: ${r1(now - m4)} lb (${r1(((now - m4) / m4) * 100 / 4)}% per week; plan is −${t.rate}%).</p>` : ''}
       ${S.profile.goalWeight && now ? `<p class="small">To goal: ${r1(now - S.profile.goalWeight)} lb. At the planned rate, about ${Math.max(0, Math.round((now - S.profile.goalWeight) / (now * t.rate / 100)))} weeks.</p>` : ''}</div>`;
+    const bt = bfTrend(); const bfPts = Object.values(S.days).filter((d) => d.bf && d.key >= from).map((d) => [diffDays(k, d.key), d.bf]);
+    const btp = Object.entries(bt).filter(([d]) => d >= from).map(([d, v]) => [diffDays(k, d), v]);
+    const bks = Object.keys(bt).sort(); const bfNow = bks.length ? bt[bks[bks.length - 1]] : null; const bf4 = bt[addDays(k, -28)];
+    const comp = (wt, pct) => ({ fat: wt * pct / 100, lean: wt * (1 - pct / 100) });
+    let compHtml = '';
+    if (bfNow && now) {
+      const c = comp(now, bfNow); compHtml = `<div class="kv" style="margin-top:8px"><span>Fat mass (trend)</span><span>${r1(c.fat)} lb</span><span>Lean mass (trend)</span><span>${r1(c.lean)} lb</span>`;
+      if (bf4 && m4) { const c4 = comp(m4, bf4); compHtml += `<span>Fat change, 4 weeks</span><span>${c.fat - c4.fat <= 0 ? '' : '+'}${r1(c.fat - c4.fat)} lb</span><span>Lean change, 4 weeks</span><span>${c.lean - c4.lean <= 0 ? '' : '+'}${r1(c.lean - c4.lean)} lb</span>`; }
+      compHtml += '</div>';
+    }
+    h += `<div class="card"><h3>Body fat, 90 days<span class="r">${bfNow ? `${r1(bfNow)}% trend` : ''}</span></h3>${bfPts.length ? lineChart([{ pts: bfPts, dots: true }, { pts: btp, cls: 'l1' }], { x0: -90, x1: 0, xlab: xlabDays(90), yfmt: (v) => r1(v), minSpan: 2, label: 'body fat percent' }) + '<div class="legend"><span><i style="background:var(--muted)"></i>scale reading</span><span><i style="background:var(--accent)"></i>trend</span></div>' : '<p class="muted small">Enter body fat with your weigh-in on Today.</p>'}
+      ${compHtml}<p class="muted tiny" style="margin:8px 0 0">Bathroom scales estimate body fat from electrical resistance, which shifts with hydration and time of day. The absolute number can be off by several points; the trend over weeks is what to watch. The goal is fat mass falling while lean mass holds.</p></div>`;
     const days14 = [...Array(14)].map((_, i) => addDays(k, i - 13));
     h += `<div class="card"><h3>Calories, 14 days<span class="r">target ${t.kcal}</span></h3>${barChart(days14.map((d) => ({ lab: parseDay(d).getDate(), v: { a: kcalOn(d) } })), ['a'], { target: t.kcal, label: 'calories' })}</div>`;
     h += `<div class="card"><h3>Protein, 14 days<span class="r">target ${t.protein} g</span></h3>${barChart(days14.map((d) => ({ lab: parseDay(d).getDate(), v: { a: proteinOn(d) } })), ['a'], { target: t.protein, label: 'protein' })}</div>`;
@@ -481,7 +493,7 @@ const HK_TYPES = { Running: 'run', Walking: 'walk', Hiking: 'hike', Rowing: 'row
 function attrs(tag) { const o = {}; tag.replace(/(\w+)="([^"]*)"/g, (_, k, v) => { o[k] = v; }); return o; }
 function hkDate(s) { const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):(\d{2}) ([+-]\d{2})(\d{2})$/.exec(s || ''); if (!m) return null; return new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}${m[5]}:${m[6]}`); }
 async function parseHealthXML(file, sinceKey, onProgress) {
-  const out = { weights: {}, rhr: {}, vo2: {}, workouts: [] };
+  const out = { weights: {}, bf: {}, rhr: {}, vo2: {}, workouts: [] };
   const CH = 4 * 1024 * 1024; const dec = new TextDecoder('utf-8'); let buf = ''; let pos = 0;
   const handleRecord = (tag) => {
     const a = attrs(tag); const d = hkDate(a.startDate); if (!d) return; const k = dayKey(d); if (k < sinceKey) return;
@@ -489,6 +501,7 @@ async function parseHealthXML(file, sinceKey, onProgress) {
     if (a.type === 'HKQuantityTypeIdentifierBodyMass') out.weights[k] = a.unit === 'kg' ? v * ENG.LB_PER_KG : v;
     else if (a.type === 'HKQuantityTypeIdentifierRestingHeartRate') out.rhr[k] = v;
     else if (a.type === 'HKQuantityTypeIdentifierVO2Max') out.vo2[k] = v;
+    else if (a.type === 'HKQuantityTypeIdentifierBodyFatPercentage') out.bf[k] = v <= 1 ? Math.round(v * 1000) / 10 : v;
   };
   const handleWorkout = (xml) => {
     const open = xml.slice(0, xml.indexOf('>') + 1); const a = attrs(open); const d = hkDate(a.startDate); if (!d) return; const k = dayKey(d); if (k < sinceKey) return;
@@ -538,6 +551,7 @@ async function importHealth(file) {
     const r = await parseHealthXML(file, since, (f) => toast(`Reading Apple Health export… ${Math.round(f * 100)}%`, 60000));
     let nW = 0, nR = 0, nV = 0, nWk = 0;
     for (const [k, v] of Object.entries(r.weights)) { if (!(S.days[k] && S.days[k].weight)) { await saveDay(k, { weight: r1(v) }); nW++; } }
+    let nB = 0; for (const [k, v] of Object.entries(r.bf)) { if (!(S.days[k] && S.days[k].bf)) { await saveDay(k, { bf: v }); nB++; } }
     for (const [k, v] of Object.entries(r.rhr)) { if ((S.days[k] || {}).rhr !== v) { await saveDay(k, { rhr: v }); nR++; } }
     for (const [k, v] of Object.entries(r.vo2)) { if ((S.days[k] || {}).vo2 !== v) { await saveDay(k, { vo2: v }); nV++; } }
     const have = new Set(S.sessions.filter((s) => s.hkStart).map((s) => s.hkStart));
@@ -550,7 +564,7 @@ async function importHealth(file) {
     }
     if (add.length) { await DB.putMany('sessions', add); S.sessions.push(...add); nWk = add.length; }
     await DB.setMeta('lastHealthImport', new Date().toISOString());
-    render(); toast(`Imported ${nWk} workouts, ${nW} weigh-ins, ${nR} resting heart rates, ${nV} VO2 max readings (last 12 months).`, 7000);
+    render(); toast(`Imported ${nWk} workouts, ${nW} weigh-ins, ${nB} body-fat readings, ${nR} resting heart rates, ${nV} VO2 max readings (last 12 months).`, 7000);
   } catch (e) { toast('Import failed: ' + e.message, 6000); }
 }
 
@@ -595,8 +609,8 @@ async function doCSV() {
   if (typeof JSZip === 'undefined') return toast('Still loading; try again');
   const zip = new JSZip(); const tr = weightTrend();
   const days = Object.values(S.days).sort((a, b) => (a.key < b.key ? -1 : 1));
-  zip.file('daily.csv', toCSV([['date', 'weight_lb', 'trend_lb', 'kcal', 'protein_g', 'back_pain', 'rule24', 'sleep', 'energy', 'soreness', 'achy_joints', 'resting_hr', 'vo2max'],
-    ...days.map((d) => [d.key, d.weight || '', tr[d.key] || '', Math.round(kcalOn(d.key)) || '', r1(proteinOn(d.key)) || '', d.checkin ? d.checkin.back : '', d.checkin ? d.checkin.rule24 || '' : '', d.checkin ? d.checkin.sleep : '', d.checkin ? d.checkin.energy : '', d.checkin ? d.checkin.soreness : '', d.checkin ? (d.checkin.joints || []).join(' ') : '', d.rhr || '', d.vo2 || ''])]));
+  zip.file('daily.csv', toCSV([['date', 'weight_lb', 'trend_lb', 'body_fat_pct', 'kcal', 'protein_g', 'back_pain', 'rule24', 'sleep', 'energy', 'soreness', 'achy_joints', 'resting_hr', 'vo2max'],
+    ...days.map((d) => [d.key, d.weight || '', tr[d.key] || '', d.bf || '', Math.round(kcalOn(d.key)) || '', r1(proteinOn(d.key)) || '', d.checkin ? d.checkin.back : '', d.checkin ? d.checkin.rule24 || '' : '', d.checkin ? d.checkin.sleep : '', d.checkin ? d.checkin.energy : '', d.checkin ? d.checkin.soreness : '', d.checkin ? (d.checkin.joints || []).join(' ') : '', d.rhr || '', d.vo2 || ''])]));
   const sets = [['date', 'session', 'exercise', 'set', 'load_lb', 'reps_or_seconds', 'reps_in_reserve', 'technique', 'pain']];
   for (const s of S.sessions.filter((x) => x.status === 'done' && x.blocks)) for (const b of s.blocks) b.sets.forEach((x, i) => { if (x.done) sets.push([s.date, s.name, EXM[b.ex].name, i + 1, x.load || '', x.reps || '', EXM[b.ex].type === 'reps' ? x.rir : '', b.tech || '', b.pain ?? '']); });
   zip.file('sets.csv', toCSV(sets));
@@ -626,7 +640,7 @@ function wire() {
       case 'logcardio': openLogCardio(); break;
       case 'daily': runSegments('Spine and hips daily', dailySegments(), { onDone: async (r) => { if (r.completed || r.stepsDone > 40) { await saveDay(todayKey(), { daily: true }); render(); } } }); break;
       case 'dailydone': { const k = todayKey(); await saveDay(k, { daily: !(S.days[k] || {}).daily }); render(); break; }
-      case 'saveweight': { const w = num($('#wt').value); if (!w || w < 70 || w > 600) return toast('Enter a weight in pounds'); await saveDay(todayKey(), { weight: w }); render(); toast('Saved'); break; }
+      case 'saveweight': { const w = num($('#wt').value), bfv = num($('#bf').value); if (!w && bfv === null) return toast('Enter weight, body fat, or both'); if (w && (w < 70 || w > 600)) return toast('Enter a weight in pounds'); if (bfv !== null && !validBf(bfv)) return toast('Body fat should be a percent, like 24.6'); const patch = {}; if (w) patch.weight = w; if (bfv !== null) patch.bf = bfv; await saveDay(todayKey(), patch); render(); toast('Saved'); break; }
       case 'food': S.view = 'food'; S.foodDay = todayKey(); render(); break;
       case 'day': case 'openday': { const d = a.dataset.day; if (d > todayKey()) { openSwapDay(d); break; } startDay(d); break; }
       case 'backup': doBackup(); break;

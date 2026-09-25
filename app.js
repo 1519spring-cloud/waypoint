@@ -1,6 +1,6 @@
 /* Waypoint app, part 1: core, storage, Today, check-in, session player, timers, cardio, Train. */
 'use strict';
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -79,6 +79,8 @@ const intakeByDay = () => { const m = {}; for (const f of S.food) m[f.date] = (m
 const proteinOn = (k) => S.food.filter((f) => f.date === k).reduce((s, f) => s + (f.protein || 0), 0);
 const kcalOn = (k) => S.food.filter((f) => f.date === k).reduce((s, f) => s + (f.kcal || 0), 0);
 function weightTrend() { return ENG.trend(S.days, null, todayKey()); }
+function bfTrend() { return ENG.trend(S.days, null, todayKey(), 'bf'); }
+const validBf = (v) => v !== null && v >= 3 && v <= 60;
 function energy() {
   const tr = weightTrend(); const p = S.profile;
   const e = ENG.expenditure({ ...p, startWeight: p.startWeight }, tr, intakeByDay(), todayKey());
@@ -210,9 +212,10 @@ function renderToday() {
     <div class="row"><button class="btn ghost grow" data-act="daily">${ic('play')} Start</button><button class="btn ${dailyDone ? '' : 'ghost'}" data-act="dailydone">${ic('check')} ${dailyDone ? 'Done' : 'Mark done'}</button></div></div>`;
   const keys = Object.keys(tr).sort(); const trendNow = keys.length ? tr[keys[keys.length - 1]] : null;
   const wk = keys.length > 7 ? tr[keys[keys.length - 1]] - tr[keys[keys.length - 8]] : null;
-  h += `<div class="card"><h3>${ic('scale')} Weigh-in<span class="r">${trendNow ? `trend ${r1(trendNow)} lb${wk !== null ? ` · ${wk <= 0 ? '' : '+'}${r1(wk)} lb/wk` : ''}` : ''}</span></h3>
-    <div class="row"><input class="field grow" id="wt" type="number" inputmode="decimal" step="0.1" placeholder="Weight, lb" value="${d.weight || ''}"><button class="btn" data-act="saveweight">Save</button></div>
-    <p class="muted tiny" style="margin:6px 0 0">Same time daily, after the bathroom, before eating. The trend line smooths out water swings.</p></div>`;
+  const bt = bfTrend(); const bk = Object.keys(bt).sort(); const bfNow = bk.length ? bt[bk[bk.length - 1]] : null;
+  h += `<div class="card"><h3>${ic('scale')} Weigh-in<span class="r">${trendNow ? `trend ${r1(trendNow)} lb${wk !== null ? ` · ${wk <= 0 ? '' : '+'}${r1(wk)} lb/wk` : ''}` : ''}${bfNow ? ` · ${r1(bfNow)}% fat` : ''}</span></h3>
+    <div class="row"><input class="field grow" id="wt" type="number" inputmode="decimal" step="0.1" placeholder="Weight, lb" value="${d.weight || ''}"><input class="field grow" id="bf" type="number" inputmode="decimal" step="0.1" placeholder="Body fat %" value="${d.bf || ''}"><button class="btn" data-act="saveweight">Save</button></div>
+    <p class="muted tiny" style="margin:6px 0 0">Same time daily, after the bathroom, before eating. Scale body-fat readings swing with hydration, so judge the trend, not one day.</p></div>`;
   h += `<div class="card"><h3>${ic('food')} Food today<button class="r linkbtn" data-act="food">Log</button></h3><div class="rings">${ring(kcalOn(k), t.kcal, 'calories', '')}${ring(proteinOn(k), t.protein, 'protein', ' g')}</div>
     <p class="muted tiny" style="margin:8px 0 0">${e.adaptive ? `Burn estimate ${e.estimate} kcal/day from your own intake and weight trend.` : `Starting estimate ${e.estimate} kcal/day; it adapts after about two weeks of logging and weigh-ins.`}</p></div>`;
   main().innerHTML = h;
@@ -231,7 +234,8 @@ function openCheckin() {
       <div class="row tiny muted" style="justify-content:space-between"><span>0 none</span><span>3 noticeable</span><span>6+ hard to ignore</span></div>
       ${ask24 ? `<label class="f">Compared with yesterday morning, your back is</label>${seg('rule24', [['better', 'Better'], ['same', 'Same'], ['worse', 'Worse']], c.rule24 || 'same')}<p class="muted tiny">The 24-hour rule: judge the last session by how you feel this morning.</p>` : ''}
       <label class="f">Any joint achy today?</label><div class="chips" id="joints">${['hip', 'knee', 'shoulder'].map((j) => `<button class="chip ${c.joints.includes(j) ? 'on' : ''}" data-j="${j}">${j[0].toUpperCase() + j.slice(1)}</button>`).join('')}</div>
-      <label class="f">Weight (optional)</label><input class="field" id="cw" type="number" inputmode="decimal" step="0.1" placeholder="lb" value="${(S.days[k] || {}).weight || ''}">
+      <div class="row"><div class="grow"><label class="f">Weight (optional)</label><input class="field" id="cw" type="number" inputmode="decimal" step="0.1" placeholder="lb" value="${(S.days[k] || {}).weight || ''}"></div>
+      <div class="grow"><label class="f">Body fat % (optional)</label><input class="field" id="cbf" type="number" inputmode="decimal" step="0.1" placeholder="%" value="${(S.days[k] || {}).bf || ''}"></div></div>
       <div class="card" style="margin-top:16px"><h3 style="font-size:15px">Any of these? <span class="r tiny">rare, but they matter</span></h3>
         ${RED_FLAGS.map((f, i) => `<label class="row small" style="padding:6px 0"><input type="checkbox" data-rf="${i}" ${c.redFlags.includes(i) ? 'checked' : ''}> ${esc(f)}</label>`).join('')}</div>
     </div>`);
@@ -245,7 +249,7 @@ function openCheckin() {
       const n = { sleep: +segVal(el, 'sleep'), energy: +segVal(el, 'energy'), soreness: +segVal(el, 'soreness'), back: +$('#back', el).value,
         joints: $$('#joints .on', el).map((b) => b.dataset.j), redFlags: $$('[data-rf]', el).filter((x) => x.checked).map((x) => +x.dataset.rf), at: new Date().toISOString() };
       if (ask24) n.rule24 = segVal(el, 'rule24');
-      const patch = { checkin: n }; const w = num($('#cw', el).value); if (w) patch.weight = w;
+      const patch = { checkin: n }; const w = num($('#cw', el).value); if (w) patch.weight = w; const bfv = num($('#cbf', el).value); if (validBf(bfv)) patch.bf = bfv;
       await saveDay(k, patch);
       if (n.rule24 === 'worse') await apply24Worse(k);
       el.remove(); render();

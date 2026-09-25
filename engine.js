@@ -19,15 +19,15 @@ const ENG = (() => {
   }
 
   /* ---------- weight trend (exponential moving average, 10% per day) ---------- */
-  function trend(days, fromKey, toKey) {
+  function trend(days, fromKey, toKey, field = 'weight') {
     // days: map key -> {weight}
-    const keys = Object.keys(days).filter((k) => days[k] && days[k].weight).sort();
+    const keys = Object.keys(days).filter((k) => days[k] && days[k][field]).sort();
     if (!keys.length) return {};
     const start = fromKey && fromKey > keys[0] ? keys[0] : keys[0];
     const end = toKey || keys[keys.length - 1];
-    const out = {}; let t = days[keys[0]].weight;
+    const out = {}; let t = days[keys[0]][field];
     for (let k = start; k <= end; k = addDays(k, 1)) {
-      const w = days[k] && days[k].weight;
+      const w = days[k] && days[k][field];
       if (w) t = t + 0.1 * (w - t);
       out[k] = Math.round(t * 100) / 100;
     }
