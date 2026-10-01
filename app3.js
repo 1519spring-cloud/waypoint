@@ -441,8 +441,8 @@ function openSchedule() {
     await saveProfile(); el.remove(); render();
   });
 }
-function openSettings() {
-  const p = S.profile;
+async function openSettings() {
+  const p = S.profile; S.lastImport = await DB.meta('lastHealthImportResult', null);
   const el = sheet(`<header><button class="txtbtn l" data-a="x">Close</button><div class="ttl">Settings</div><button class="txtbtn r" data-a="save">Save</button></header>
     <div class="scroll">
       <div class="sect">Profile and targets</div><div class="card">${profileForm(p)}
@@ -459,7 +459,7 @@ function openSettings() {
       <div class="sect">Sync</div><div class="card list">
         <button data-a="sync"><div class="grow">Apple Health sync<div class="sub">workouts and readings by Shortcut; Strava through Health</div></div>${ic('chev')}</button></div>
       <div class="sect">Data</div><div class="card list">
-        <label><div class="grow">Import from Apple Health<div class="sub">export.xml from the Health app export</div></div><input type="file" accept=".xml,text/xml,application/xml,.zip" id="hk" style="width:120px"></label>
+        <label><div class="grow">Import from Apple Health<div class="sub">${S.lastImport ? `Last: ${esc(fmtShort(dayKey(new Date(S.lastImport.at))))}. ${esc(S.lastImport.summary.replace(/^Imported /, '').replace(/ \(last 12 months\)\.$/, ''))}` : 'export.zip or export.xml from the Health app export'}</div></div><input type="file" accept=".xml,text/xml,application/xml,.zip" id="hk" style="width:120px"></label>
         <button data-a="backup"><div class="grow">Back up now<div class="sub">${S.lastBackup ? `last: ${fmtShort(dayKey(new Date(S.lastBackup)))}` : 'never'}</div></div>${ic('share')}</button>
         <label><div class="grow">Restore from a backup</div><input type="file" accept=".json,application/json" id="rs" style="width:120px"></label>
         <button data-a="csv"><div class="grow">Export spreadsheets (CSV)</div>${ic('share')}</button>
@@ -566,8 +566,9 @@ async function importHealth(file) {
       add.push({ id: uid(), date: w.date, tpl: 'health', name: `${label} (Watch)`, kind, status: 'done', startedAt: w.start, hkStart: w.start, minutes: w.minutes, source: 'health', cardio: kind === 'cardio' ? { mode: w.mode, minutes: w.minutes, dist: w.dist, avgHR: w.avgHR, kcal: w.kcal } : null, blocks: kind === 'cardio' ? null : [] });
     }
     if (add.length) { await DB.putMany('sessions', add); S.sessions.push(...add); nWk = add.length; }
-    await DB.setMeta('lastHealthImport', new Date().toISOString());
-    render(); toast(`Imported ${nWk} workouts, ${nW} weigh-ins, ${nB} body-fat readings, ${nR} resting heart rates, ${nV} VO2 max readings (last 12 months).`, 7000);
+    const summary = `Imported ${nWk} workouts, ${nW} weigh-ins, ${nB} body-fat readings, ${nR} resting heart rates, ${nV} VO2 max readings (last 12 months).`;
+    await DB.setMeta('lastHealthImport', new Date().toISOString()); await DB.setMeta('lastHealthImportResult', { at: new Date().toISOString(), summary });
+    render(); toast(summary, 7000);
   } catch (e) { toast('Import failed: ' + e.message, 6000); }
 }
 
