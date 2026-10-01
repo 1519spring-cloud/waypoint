@@ -456,6 +456,8 @@ function openSettings() {
         <label><div class="grow">Rest after main lifts (s)</div><input class="field" style="width:80px" name="restStrength" type="number" value="${p.restStrength}"></label>
         <label><div class="grow">Rest after other sets (s)</div><input class="field" style="width:80px" name="restOther" type="number" value="${p.restOther}"></label>
         <label><div class="grow">Program start date</div><input class="field" style="width:160px" name="startDate" type="date" value="${p.startDate || ''}"></label></div>
+      <div class="sect">Sync</div><div class="card list">
+        <button data-a="sync"><div class="grow">Strava and Apple Health<div class="sub">two-way Strava sync, Health readings by Shortcut</div></div>${ic('chev')}</button></div>
       <div class="sect">Data</div><div class="card list">
         <label><div class="grow">Import from Apple Health<div class="sub">export.xml from the Health app export</div></div><input type="file" accept=".xml,text/xml,application/xml,.zip" id="hk" style="width:120px"></label>
         <button data-a="backup"><div class="grow">Back up now<div class="sub">${S.lastBackup ? `last: ${fmtShort(dayKey(new Date(S.lastBackup)))}` : 'never'}</div></div>${ic('share')}</button>
@@ -480,6 +482,7 @@ function openSettings() {
       }
       case 'schedule': openSchedule(); break;
       case 'level': openLevelPick(); break;
+      case 'sync': WSYNC.openSettingsSheet(); break;
       case 'backup': doBackup(); break;
       case 'csv': doCSV(); break;
       case 'erase': if (confirm('Erase all Waypoint data on this phone? Back up first if you want to keep it.') && confirm('Really erase everything?')) { for (const s of STORES) await DB.clear(s); location.reload(); } break;
@@ -588,6 +591,7 @@ function offerFile(blob, name, detail, onSaved) {
 async function buildBackup() {
   const data = { app: 'Waypoint', version: APP_VERSION, exported: new Date().toISOString() };
   for (const s of STORES) data[s] = await DB.all(s);
+  data.meta = data.meta.filter((m) => m.key !== 'strava'); // Strava secret and tokens stay on this phone
   return new Blob([JSON.stringify(data)], { type: 'application/json' });
 }
 async function doBackup() {
@@ -678,6 +682,7 @@ function registerSW() {
     await DB.open(); await loadAll(); wire(); registerSW();
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     if (!S.profile) { setTitle('Waypoint'); openOnboarding(); } else render();
+    if (typeof WSYNC !== 'undefined') WSYNC.boot().catch(() => {});
   } catch (err) {
     document.body.innerHTML = `<div class="empty"><h2>Waypoint could not open its storage</h2><p>${esc(err.message)}</p><p>If this is a Private Browsing tab, open Waypoint in a normal tab or from the Home Screen.</p></div>`;
   }
