@@ -97,7 +97,7 @@ The code is public; your data never leaves the phone.
 
 Settings > Apple Health sync. Code in `sync.js`. Runs only while Waypoint is open (launch, return to foreground, every 30 minutes); iOS gives web apps no background time.
 
-**How data gets in.** An iPhone Shortcut ("Waypoint Health") reads the last 7 days from Apple Health and writes them to a secret GitHub gist file `waypoint-health.txt`, one line each:
+**How data gets in.** An iPhone Shortcut ("Waypoint Health") reads the last 14 days from Apple Health and writes them to a secret GitHub gist file `waypoint-health.txt`, one line each:
 - `K|<start ISO>|<end ISO>|<workout type>|<distance>|<active energy>` for workouts
 - `W|<ISO date>|<value>|<unit>` for weight; `F` body fat, `R` resting heart rate, `V` VO2 max
 

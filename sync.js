@@ -1,4 +1,4 @@
-/* Waypoint part 4: Apple Health relay. An iPhone Shortcut copies the last week of Health readings and workouts into a
+/* Waypoint part 4: Apple Health relay. An iPhone Shortcut copies the last 14 days of Health readings and workouts into a
    secret GitHub gist; Waypoint reads that gist (no token needed) and merges it in.
    Strava has no free API (a paid subscription has been required since June 2026), so Strava is reached through Apple Health:
    Strava writes its activities into Health, and Watch workouts flow from Health to Strava on their own.
@@ -143,7 +143,7 @@ const WSYNC = (() => {
     const el = sheet(`<header><button class="txtbtn l" data-a="x">Close</button><div class="ttl">Apple Health sync</div><span style="min-width:64px"></span></header>
       <div class="scroll">
       <div class="card"><h3>Apple Health${g.id ? '<span class="r">on</span>' : ''}</h3>
-        <p class="small" style="margin-top:0">An iPhone Shortcut copies the last week of workouts, weight, body fat, resting heart rate and VO2 max from Apple Health into a private GitHub gist. Waypoint reads it whenever it opens. A workout you also logged by hand here is linked to the Watch recording, not added twice.</p>
+        <p class="small" style="margin-top:0">An iPhone Shortcut copies the last 14 days of workouts, weight, body fat, resting heart rate and VO2 max from Apple Health into a private GitHub gist. Waypoint reads it whenever it opens. A workout you also logged by hand here is linked to the Watch recording, not added twice.</p>
         ${g.id ? `<div class="kv"><span>Newest reading</span><span>${esc(ago(g.newest))}</span><span>Shortcut last ran</span><span>${esc(ago(g.gistUpdated))}</span><span>Checked</span><span>${esc(ago(g.lastFetch))}</span></div>` : ''}
         <label class="f">Gist link</label><input class="field" id="gid" autocomplete="off" placeholder="https://gist.github.com/…" value="${esc(g.url || '')}">
         <div class="row" style="margin-top:10px"><button class="btn grow" data-a="gsave">${g.id ? 'Save and check now' : 'Save'}</button>${g.id ? '<button class="btn ghost" data-a="goff">Turn off</button>' : ''}</div>
@@ -168,7 +168,7 @@ const WSYNC = (() => {
     <li><b>Gist:</b> on gist.github.com, create a <b>secret</b> gist. File name <b>${GIST_FILE}</b>, content: start. Copy the page's address and paste it above as the Gist link.</li>
     <li><b>Shortcut:</b> in the Shortcuts app, make a new shortcut named Waypoint Health.
       <ol type="a" style="padding-left:18px">
-        <li><b>Find Health Samples</b> where Type is Workouts and Start Date is in the last 7 days.</li>
+        <li><b>Find Health Samples</b> where Type is Workouts and Start Date is in the last 14 days. (Waypoint skips anything it already has, so the overlap is harmless.)</li>
         <li><b>Repeat with Each</b> item. Inside it, add a <b>Text</b> action reading <code>K|Start Date|End Date|Workout Activity Type|Distance|Active Energy</code>. Each name after K| is a property of Repeat Item: tap Repeat Item to pick it, and set both dates' format to ISO 8601. Then <b>Add to Variable</b> named Lines.</li>
         <li>Add the same pair for Weight, with the text <code>W|Start Date|Value|Unit</code> (Start Date in ISO 8601), adding to Lines.</li>
         <li>Repeat that for Body Fat Percentage (<code>F|</code>), Resting Heart Rate (<code>R|</code>) and VO2 Max (<code>V|</code>).</li>
