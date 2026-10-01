@@ -198,7 +198,7 @@ function lineChart(series, opts = {}) {
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   const x0 = opts.x0 ?? Math.min(...xs), x1 = Math.max(opts.x1 ?? -Infinity, ...xs, x0 + 1);
   let y0 = opts.y0 ?? Math.min(...ys), y1 = opts.y1 ?? Math.max(...ys); if (y1 - y0 < (opts.minSpan || 1)) { const m = (y0 + y1) / 2; y0 = m - (opts.minSpan || 1) / 2; y1 = m + (opts.minSpan || 1) / 2; }
-  const pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad;
+  if (!opts.noPad) { const pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad; }
   const X = (x) => L + ((x - x0) / (x1 - x0)) * (W - L - R), Y = (y) => T + (1 - (y - y0) / (y1 - y0)) * (H - T - B);
   let g = '';
   for (let i = 0; i <= 3; i++) { const v = y0 + ((y1 - y0) * i) / 3; g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text x="${L - 4}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end">${opts.yfmt ? opts.yfmt(v) : Math.round(v)}</text>`; }
@@ -223,6 +223,28 @@ function barChart(groups, keys, opts = {}) {
   if (opts.target) s += `<line class="l2" x1="${L}" x2="${W - R}" y1="${Y(opts.target).toFixed(1)}" y2="${Y(opts.target).toFixed(1)}"/>`;
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label || 'chart')}">${s}</svg>`;
 }
+// Long-range weight chart: weekly averages as dots, a monthly-average line broken across gaps of more than 60 days
+function weightHistoryChart(range, k) {
+  const all = Object.values(S.days).filter((d) => d.weight).sort((a, b) => (a.key < b.key ? -1 : 1));
+  const from = range === 'all' ? (all[0] || {}).key : addDays(k, -Number(range));
+  const inRange = all.filter((d) => d.key >= from && d.key <= k);
+  if (inRange.length < 2) return `<p class="muted small">Not enough weigh-ins in this range yet. Import older weights in Settings › Data › Import weight history.</p>`;
+  const group = (keyOf) => { const m = new Map(); for (const d of inRange) { const g = keyOf(d.key); if (!m.has(g)) m.set(g, []); m.get(g).push(d); } return [...m.values()].map((ds) => [Math.round(ds.reduce((s, d) => s + diffDays(k, d.key), 0) / ds.length), r1(ds.reduce((s, d) => s + d.weight, 0) / ds.length)]); };
+  const weekly = range === '365' ? inRange.map((d) => [diffDays(k, d.key), d.weight]) : group((key) => ENG.weekStart(key));
+  const monthly = group((key) => key.slice(0, 7));
+  const segs = []; let cur = [];
+  for (const p of monthly) { if (cur.length && p[0] - cur[cur.length - 1][0] > 60) { segs.push(cur); cur = []; } cur.push(p); }
+  if (cur.length) segs.push(cur);
+  const x0 = diffDays(k, from); const years = Math.abs(x0) / 365;
+  const lab = (x) => { const d = addDays(k, x); return years > 2 ? d.slice(0, 4) : fmtMD(d); };
+  const xlab = [[x0, lab(x0)], [Math.round(x0 / 2), lab(Math.round(x0 / 2))], [0, 'Today']];
+  const lo = inRange.reduce((a, d) => (d.weight < a.weight ? d : a)), hi = inRange.reduce((a, d) => (d.weight > a.weight ? d : a));
+  const fmtD = (key) => parseDay(key).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const ys = weekly.map((p) => p[1]); const y0 = Math.floor((Math.min(...ys) - 1) / 5) * 5; const y1 = y0 + Math.max(15, Math.ceil((Math.max(...ys) + 1 - y0) / 15) * 15); // gridlines land on whole multiples of 5
+  return lineChart([{ pts: weekly, dots: true }, ...segs.map((s) => ({ pts: s, cls: 'l1' }))], { x0, x1: 0, xlab, y0, y1, noPad: true, yfmt: (v) => Math.round(v), label: 'weight history' })
+    + `<div class="legend"><span><i style="background:var(--muted)"></i>${range === '365' ? 'weigh-in' : 'weekly average'}</span><span><i style="background:var(--accent)"></i>monthly average</span></div>`
+    + `<p class="small" style="margin:6px 0 0">${inRange.length} weigh-ins. Low ${r1(lo.weight)} lb (${esc(fmtD(lo.key))}); high ${r1(hi.weight)} lb (${esc(fmtD(hi.key))}).</p>`;
+}
 function renderProgress() {
   setTitle('Progress'); const k = todayKey();
   let h = seg('ptab', [['body', 'Body'], ['train', 'Training'], ['cardio', 'Cardio'], ['tests', 'Tests']], S.progTab);
@@ -232,8 +254,10 @@ function renderProgress() {
     const w = Object.values(S.days).filter((d) => d.weight && d.key >= from).map((d) => [diffDays(k, d.key), d.weight]);
     const trp = Object.entries(tr).filter(([d]) => d >= from).map(([d, v]) => [diffDays(k, d), v]);
     const tk = Object.keys(tr).sort(); const now = tk.length ? tr[tk[tk.length - 1]] : null; const m4 = tr[addDays(k, -28)];
-    h += `<div class="card"><h3>Weight, 90 days<span class="r">${now ? `${r1(now)} lb trend` : ''}</span></h3>${lineChart([{ pts: w, dots: true }, { pts: trp, cls: 'l1' }], { x0: -90, x1: 0, xlab: xlabDays(90), yfmt: (v) => r1(v), minSpan: 4, label: 'weight' })}
-      <div class="legend"><span><i style="background:var(--muted)"></i>daily weigh-in</span><span><i style="background:var(--accent)"></i>trend</span></div>
+    const wr = S.wRange || '90';
+    h += `<div class="card"><h3>Weight<span class="r">${now ? `${r1(now)} lb trend` : ''}</span></h3>${seg('wrange', [['90', '90 days'], ['365', '1 year'], ['1825', '5 years'], ['all', 'All']], wr)}
+      ${wr === '90' ? lineChart([{ pts: w, dots: true }, { pts: trp, cls: 'l1' }], { x0: -90, x1: 0, xlab: xlabDays(90), yfmt: (v) => r1(v), minSpan: 4, label: 'weight' })
+        + '<div class="legend"><span><i style="background:var(--muted)"></i>daily weigh-in</span><span><i style="background:var(--accent)"></i>trend</span></div>' : weightHistoryChart(wr, k)}
       ${now && m4 ? `<p class="small">Last 4 weeks: ${r1(now - m4)} lb (${r1(((now - m4) / m4) * 100 / 4)}% per week; plan is −${t.rate}%).</p>` : ''}
       ${S.profile.goalWeight && now ? `<p class="small">To goal: ${r1(now - S.profile.goalWeight)} lb. At the planned rate, about ${Math.max(0, Math.round((now - S.profile.goalWeight) / (now * t.rate / 100)))} weeks.</p>` : ''}</div>`;
     const bt = bfTrend(); const bfPts = Object.values(S.days).filter((d) => d.bf && d.key >= from).map((d) => [diffDays(k, d.key), d.bf]);
@@ -442,7 +466,7 @@ function openSchedule() {
   });
 }
 async function openSettings() {
-  const p = S.profile; S.lastImport = await DB.meta('lastHealthImportResult', null);
+  const p = S.profile; S.lastImport = await DB.meta('lastHealthImportResult', null); S.lastWImport = await DB.meta('lastWeightImport', null);
   const el = sheet(`<header><button class="txtbtn l" data-a="x">Close</button><div class="ttl">Settings</div><button class="txtbtn r" data-a="save">Save</button></header>
     <div class="scroll">
       <div class="sect">Profile and targets</div><div class="card">${profileForm(p)}
@@ -460,6 +484,7 @@ async function openSettings() {
         <button data-a="sync"><div class="grow">Apple Health sync<div class="sub">workouts and readings by Shortcut; Strava through Health</div></div>${ic('chev')}</button></div>
       <div class="sect">Data</div><div class="card list">
         <label><div class="grow">Import from Apple Health<div class="sub">${S.lastImport ? `Last: ${esc(fmtShort(dayKey(new Date(S.lastImport.at))))}. ${esc(S.lastImport.summary.replace(/^Imported /, '').replace(/ \(last 12 months\)\.$/, ''))}` : 'export.zip or export.xml from the Health app export'}</div></div><input type="file" accept=".xml,text/xml,application/xml,.zip" id="hk" style="width:120px"></label>
+        <label><div class="grow">Import weight history (CSV)<div class="sub">${S.lastWImport ? `Last: ${esc(fmtShort(dayKey(new Date(S.lastWImport.at))))}. ${esc(S.lastWImport.summary)}` : 'a file with date and weight columns, such as a MyFitnessPal history'}</div></div><input type="file" accept=".csv,text/csv,text/plain" id="wi" style="width:120px"></label>
         <button data-a="backup"><div class="grow">Back up now<div class="sub">${S.lastBackup ? `last: ${fmtShort(dayKey(new Date(S.lastBackup)))}` : 'never'}</div></div>${ic('share')}</button>
         <label><div class="grow">Restore from a backup</div><input type="file" accept=".json,application/json" id="rs" style="width:120px"></label>
         <button data-a="csv"><div class="grow">Export spreadsheets (CSV)</div>${ic('share')}</button>
@@ -468,6 +493,7 @@ async function openSettings() {
     </div>`);
   el.addEventListener('change', async (ev) => {
     if (ev.target.id === 'hk' && ev.target.files[0]) { importHealth(ev.target.files[0]); ev.target.value = ''; }
+    if (ev.target.id === 'wi' && ev.target.files[0]) { await importWeights(ev.target.files[0]); ev.target.value = ''; el.remove(); openSettings(); }
     if (ev.target.id === 'rs' && ev.target.files[0]) { await restoreBackup(ev.target.files[0]); ev.target.value = ''; }
   });
   el.addEventListener('click', async (ev) => {
@@ -572,6 +598,51 @@ async function importHealth(file) {
   } catch (e) { toast('Import failed: ' + e.message, 6000); }
 }
 
+/* ================= WEIGHT HISTORY IMPORT (CSV) ================= */
+// Reads any CSV with a date column and a weight column (header names are matched loosely), plus an optional body-fat column.
+// A day that already has a weight keeps it; imported days are tagged wSrc 'import'.
+function csvRows(text) {
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') q = false; else cell += c; continue; }
+    if (c === '"') q = true; else if (c === ',') { row.push(cell); cell = ''; } else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; } else cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((x) => x.trim()));
+}
+function parseAnyDate(s) {
+  s = String(s || '').trim(); let m;
+  if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s))) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(s))) { const y = m[3].length === 2 ? `20${m[3]}` : m[3]; return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; }
+  const d = new Date(s.replace(/^[A-Za-z]+,\s*/, '')); return isNaN(d) ? null : dayKey(d);
+}
+async function importWeights(file) {
+  try {
+    const rows = csvRows(await file.text()); if (rows.length < 2) return toast('That file has no rows');
+    const head = rows[0].map((h) => h.trim().toLowerCase());
+    const di = head.findIndex((h) => /date|day/.test(h)), wi = head.findIndex((h) => /weight|^lb|lbs|^kg|mass/.test(h)), fi = head.findIndex((h) => /fat/.test(h));
+    if (di < 0 || wi < 0) return toast('Need a header row with a date column and a weight column', 6000);
+    const kg = /kg/.test(head[wi]); const today = todayKey();
+    let added = 0, kept = 0, bad = 0, first = null, last = null;
+    const tx = []; 
+    for (const r of rows.slice(1)) {
+      const k = parseAnyDate(r[di]); let w = parseFloat(String(r[wi] || '').replace(/[^\d.]/g, ''));
+      if (!k || k > today || !Number.isFinite(w)) { bad++; continue; }
+      if (kg) w *= ENG.LB_PER_KG; if (w < 70 || w > 600) { bad++; continue; }
+      const cur = S.days[k] || {}; if (cur.weight) { kept++; continue; }
+      const patch = { weight: r1(w), wSrc: 'import' }; const bf = fi >= 0 ? parseFloat(r[fi]) : NaN; if (Number.isFinite(bf) && !cur.bf && validBf(bf)) patch.bf = bf;
+      const d = { key: k, ...cur, ...patch }; S.days[k] = d; tx.push(d); added++;
+      if (!first || k < first) first = k; if (!last || k > last) last = k;
+    }
+    if (tx.length) await DB.putMany('days', tx);
+    const pl = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`; const fmtY = (key) => parseDay(key).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const summary = `Added ${pl(added, 'weigh-in')}${first ? ` (${fmtY(first)} to ${fmtY(last)})` : ''}; kept ${pl(kept, 'day')} that already had a weight${bad ? `; skipped ${pl(bad, 'unreadable row')}` : ''}.`;
+    await DB.setMeta('lastWeightImport', { at: new Date().toISOString(), summary });
+    render(); toast(summary, 7000);
+  } catch (e) { toast('Import failed: ' + e.message, 6000); }
+}
+
 /* ================= BACKUP / RESTORE / CSV ================= */
 function offerFile(blob, name, detail, onSaved) {
   const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
@@ -636,6 +707,7 @@ function wire() {
   });
   main().addEventListener('click', async (ev) => {
     const sb = ev.target.closest('.seg button'); if (sb && sb.closest('[data-seg="ptab"]')) { S.progTab = sb.dataset.v; return render(); }
+    if (sb && sb.closest('[data-seg="wrange"]')) { S.wRange = sb.dataset.v; return render(); }
     const a = ev.target.closest('[data-act]'); if (!a) return;
     switch (a.dataset.act) {
       case 'checkin': openCheckin(); break;

@@ -1,6 +1,6 @@
 /* Waypoint app, part 1: core, storage, Today, check-in, session player, timers, cardio, Train. */
 'use strict';
-const APP_VERSION = '1.3.2';
+const APP_VERSION = '1.4.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -50,7 +50,7 @@ const DB = {
 /* ---------- state ---------- */
 const S = {
   profile: null, days: {}, sessions: [], food: [], favs: [], prog: {}, assess: [],
-  view: 'today', foodDay: null, progTab: 'body', learnCat: 'All', learnQ: '', lastBackup: null, updateReady: null, active: null,
+  view: 'today', foodDay: null, progTab: 'body', wRange: '90', learnCat: 'All', learnQ: '', lastBackup: null, updateReady: null, active: null,
 };
 const DEFAULT_PROFILE = {
   name: '', birthYear: null, sex: 'male', heightIn: 70, startWeight: null, goalWeight: null, lossRate: 0.5, proteinPerKg: 1.6, activity: 1.5,

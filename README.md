@@ -109,6 +109,12 @@ Waypoint reads the gist through GitHub's API without a token. A relayed workout 
 
 Tested 2026-10-01 in headless Chromium against a mocked gist: 23 checks covering workout import and linking, the Strava duplicate, km and kg conversion, fractional body fat, both date formats, hand-entered values winning, delete-stays-deleted, the missing-gist error, and the Settings sheet. The Shortcut itself, and the live GitHub API call, are untested until the first real run on the phone.
 
+## Weight history (version 1.4.0, 2026-10-01)
+
+- **Import weight history (CSV)** in Settings > Data reads any CSV with a header row containing a date column and a weight column (names matched loosely; kg converted to lb; dates as 2026-09-25, 9/25/2026 or "Sep 25, 2026"), plus an optional body-fat column. A day that already has a weight keeps it; imported days are tagged `wSrc: 'import'`. Re-importing the same file adds nothing. Hilary's own history (2,306 weigh-ins, 2011 to 2026, read from MyFitnessPal screen recordings) is a private file kept out of this public repo; he imports it on the phone.
+- **Progress > Body > Weight** has a range selector: 90 days (daily weigh-ins plus trend, as before), 1 year (each weigh-in), 5 years and All (weekly averages). The longer views draw a monthly-average line that breaks across gaps of more than 60 days, and list the lowest and highest weigh-in in the range.
+- **Trend fix:** the weight and body-fat trend now restarts from the first reading after a gap of more than 14 days, instead of crawling up from a value months or years old.
+
 ## Apple Watch data (manual export)
 
 Waypoint cannot read Apple Health directly (only native apps can). The sync above covers day-to-day use; the export still works for a full history:

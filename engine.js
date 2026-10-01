@@ -25,10 +25,10 @@ const ENG = (() => {
     if (!keys.length) return {};
     const start = fromKey && fromKey > keys[0] ? keys[0] : keys[0];
     const end = toKey || keys[keys.length - 1];
-    const out = {}; let t = days[keys[0]][field];
+    const out = {}; let t = days[keys[0]][field]; let last = keys[0];
     for (let k = start; k <= end; k = addDays(k, 1)) {
       const w = days[k] && days[k][field];
-      if (w) t = t + 0.1 * (w - t);
+      if (w) { t = diffDays(last, k) > 14 ? w : t + 0.1 * (w - t); last = k; } // restart after a long gap in weigh-ins
       out[k] = Math.round(t * 100) / 100;
     }
     return out;
