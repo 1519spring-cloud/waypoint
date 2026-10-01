@@ -624,20 +624,22 @@ async function importWeights(file) {
     const di = head.findIndex((h) => /date|day/.test(h)), wi = head.findIndex((h) => /weight|^lb|lbs|^kg|mass/.test(h)), fi = head.findIndex((h) => /fat/.test(h));
     if (di < 0 || wi < 0) return toast('Need a header row with a date column and a weight column', 6000);
     const kg = /kg/.test(head[wi]); const today = todayKey();
-    let added = 0, kept = 0, bad = 0, first = null, last = null;
+    let added = 0, kept = 0, fixed = 0, bad = 0, first = null, last = null;
     const tx = []; 
     for (const r of rows.slice(1)) {
       const k = parseAnyDate(r[di]); let w = parseFloat(String(r[wi] || '').replace(/[^\d.]/g, ''));
       if (!k || k > today || !Number.isFinite(w)) { bad++; continue; }
       if (kg) w *= ENG.LB_PER_KG; if (w < 70 || w > 600) { bad++; continue; }
-      const cur = S.days[k] || {}; if (cur.weight) { kept++; continue; }
+      const cur = S.days[k] || {};
+      if (cur.weight && cur.wSrc === 'import') { if (Math.abs(cur.weight - r1(w)) >= 0.05) { const d = { ...cur, weight: r1(w) }; S.days[k] = d; tx.push(d); fixed++; } continue; } // a later file corrects an earlier import
+      if (cur.weight) { kept++; continue; }
       const patch = { weight: r1(w), wSrc: 'import' }; const bf = fi >= 0 ? parseFloat(r[fi]) : NaN; if (Number.isFinite(bf) && !cur.bf && validBf(bf)) patch.bf = bf;
       const d = { key: k, ...cur, ...patch }; S.days[k] = d; tx.push(d); added++;
       if (!first || k < first) first = k; if (!last || k > last) last = k;
     }
     if (tx.length) await DB.putMany('days', tx);
     const pl = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`; const fmtY = (key) => parseDay(key).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const summary = `Added ${pl(added, 'weigh-in')}${first ? ` (${fmtY(first)} to ${fmtY(last)})` : ''}; kept ${pl(kept, 'day')} that already had a weight${bad ? `; skipped ${pl(bad, 'unreadable row')}` : ''}.`;
+    const summary = `Added ${pl(added, 'weigh-in')}${first ? ` (${fmtY(first)} to ${fmtY(last)})` : ''}; kept ${pl(kept, 'day')} that already had a weight${fixed ? `; corrected ${pl(fixed, 'earlier imported value')}` : ''}${bad ? `; skipped ${pl(bad, 'unreadable row')}` : ''}.`;
     await DB.setMeta('lastWeightImport', { at: new Date().toISOString(), summary });
     render(); toast(summary, 7000);
   } catch (e) { toast('Import failed: ' + e.message, 6000); }
