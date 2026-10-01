@@ -174,7 +174,7 @@ function openCardio(k, tplId) {
       ${c.segments ? `<div class="list small">${compress(c.segments).map((g) => `<div><span class="grow">${esc(g.label)}</span><span class="end">${g.n > 1 ? `${g.n} × ` : ''}${mmss(g.sec)}</span></div>`).join('')}</div>` : ''}
       <div class="kv" style="margin-top:10px"><span>Max heart rate (est.)</span><span>${c.zones.max} bpm</span><span>Zone 2</span><span>${c.zones.z2[0]}–${c.zones.z2[1]} bpm</span><span>Hard intervals</span><span>${c.zones.hard[0]}–${c.zones.hard[1]} bpm</span></div>
       <button class="btn block" style="margin-top:12px" data-a="go">${ic('play')} ${c.segments ? 'Start guided timer' : 'Start timer'}</button></div>
-      <div class="card"><h3>Log it</h3><p class="muted tiny" style="margin:0 0 6px">Did it with the Apple Watch? Log it here anyway so the plan knows how it felt; Strava sync links it to the Watch recording instead of adding a second copy.</p>${cardioForm({ minutes: c.mins, mode: tpl.cardio === 'intervals' ? 'row' : S.profile.backLevel >= 4 ? 'run' : 'walk' }, c)}</div></div>`);
+      <div class="card"><h3>Log it</h3><p class="muted tiny" style="margin:0 0 6px">Did it with the Apple Watch? Log it here anyway so the plan knows how it felt; the Apple Health sync links it to the Watch recording instead of adding a second copy.</p>${cardioForm({ minutes: c.mins, mode: tpl.cardio === 'intervals' ? 'row' : S.profile.backLevel >= 4 ? 'run' : 'walk' }, c)}</div></div>`);
   wireSeg(el);
   let segsDone = null;
   el.addEventListener('click', async (ev) => {
@@ -275,7 +275,7 @@ function renderTrain() {
   }
   h += `</div><div class="row"><button class="btn ghost grow" data-act="logcardio">${ic('plus')} Log activity</button><button class="btn ghost grow" data-act="schedule">Edit schedule</button></div>`;
   const hist = S.sessions.filter((s) => s.status === 'done').sort((a, b) => (a.date + (a.finishedAt || '') < b.date + (b.finishedAt || '') ? 1 : -1)).slice(0, 25);
-  h += `<div class="sect">History</div><div class="card list">${hist.map((s) => `<button data-act="viewsession" data-id="${s.id}"><div class="grow"><b>${esc(s.name)}</b><div class="sub">${fmtShort(s.date)}${s.source === 'health' ? ' · Apple Health' : s.source === 'strava' ? ' · Strava' : s.stravaPushed ? ' · posted to Strava' : ''}</div></div><span class="end">${s.minutes ? `${s.minutes} min` : ''}${s.cardio && s.cardio.dist ? ` · ${s.cardio.dist} mi` : ''}</span></button>`).join('') || '<p class="muted small">Nothing yet.</p>'}</div>`;
+  h += `<div class="sect">History</div><div class="card list">${hist.map((s) => `<button data-act="viewsession" data-id="${s.id}"><div class="grow"><b>${esc(s.name)}</b><div class="sub">${fmtShort(s.date)}${s.source === 'health' ? ' · Apple Health' : s.hkStart ? ' · linked to Watch' : ''}</div></div><span class="end">${s.minutes ? `${s.minutes} min` : ''}${s.cardio && s.cardio.dist ? ` · ${s.cardio.dist} mi` : ''}</span></button>`).join('') || '<p class="muted small">Nothing yet.</p>'}</div>`;
   main().innerHTML = h;
 }
 function viewSession(id) {
@@ -288,7 +288,7 @@ function viewSession(id) {
   el.addEventListener('click', async (ev) => {
     const a = ev.target.closest('[data-a]'); if (!a) return;
     if (a.dataset.a === 'x') el.remove();
-    if (a.dataset.a === 'del' && confirm(s.stravaId ? 'Delete this session from Waypoint? Strava keeps its copy.' : 'Delete this session?')) { if (typeof WSYNC !== 'undefined') await WSYNC.forget(s); await DB.del('sessions', s.id); S.sessions = S.sessions.filter((x) => x.id !== s.id); el.remove(); render(); }
+    if (a.dataset.a === 'del' && confirm(s.source === 'health' ? 'Delete this session from Waypoint? Apple Health and Strava keep their copies.' : 'Delete this session?')) { if (typeof WSYNC !== 'undefined') await WSYNC.forget(s); await DB.del('sessions', s.id); S.sessions = S.sessions.filter((x) => x.id !== s.id); el.remove(); render(); }
   });
 }
 function openLevelPick() {

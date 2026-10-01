@@ -93,18 +93,21 @@ Use the Home Screen app, not a Safari tab: WebKit exempts Home Screen web apps f
 
 The code is public; your data never leaves the phone.
 
-## Strava and Apple Health sync (added 2026-10-01, version 1.2.0)
+## Apple Health sync, and Strava through Health (version 1.3.0, 2026-10-01)
 
-Settings > Strava and Apple Health. Code in `sync.js`. Sync runs only while Waypoint is open (launch, return to foreground, every 30 minutes, and 45 seconds after a session is saved); iOS gives web apps no background time.
+Settings > Apple Health sync. Code in `sync.js`. Runs only while Waypoint is open (launch, return to foreground, every 30 minutes); iOS gives web apps no background time.
 
-**Strava, both directions, no server.** Strava's API accepts calls straight from the page (checked 2026-10-01: the token and API endpoints return `access-control-allow-origin: *`). The token exchange needs the app's Client Secret, so Hilary registers his own Strava API app and pastes the Client ID and Secret into Settings; they live only in this phone's IndexedDB and `buildBackup()` leaves them out. Access tokens last six hours and refresh automatically.
-- Pull: activities since the last pull (first pull: 12 months). A Strava activity is linked, not duplicated, when it matches a Health-imported workout by start time (within 5 minutes) or a hand-logged session on the same day of the same activity family with minutes within 25% (or 8 minutes). Unmatched ones become sessions marked "Strava". Deleting one in Waypoint keeps it from coming back.
-- Push: Waypoint sessions done on or after the connection day. Strength (with its exercise list) and mobility post right away; hand-logged cardio waits 3 hours so the Watch's own upload can arrive and be linked instead. Health-imported and Strava-imported sessions are never posted. Strava has no delete endpoint for apps, so deleting in Waypoint leaves Strava's copy.
-- If the OAuth return lands in Safari instead of the Home Screen app (separate storage), the page shows the code to copy, and Settings has a field to paste it.
+**How data gets in.** An iPhone Shortcut ("Waypoint Health") reads the last 7 days from Apple Health and writes them to a secret GitHub gist file `waypoint-health.txt`, one line each:
+- `K|<start ISO>|<end ISO>|<workout type>|<distance>|<active energy>` for workouts
+- `W|<ISO date>|<value>|<unit>` for weight; `F` body fat, `R` resting heart rate, `V` VO2 max
 
-**Apple Health, through Strava and a Shortcut.** Watch workouts reach Waypoint through Strava's own Apple Health connection. Weight, body fat, resting heart rate and VO2 max come from an iPhone Shortcut ("Waypoint Health") that writes the last 7 days of samples to a secret GitHub gist file `waypoint-health.txt`, one line each: `W|<ISO date>|<value>|<unit>` (F body fat, R resting HR, V VO2 max). Waypoint reads the gist through GitHub's API without a token. Weigh-ins already typed by hand are never overwritten. Trigger: Shortcuts automation on closing the Wyze app, plus a daily one, because Health can't be read while the phone is locked. The full Shortcut steps are in the app under Settings > Strava and Apple Health > Shortcut setup steps. Privacy cost: those readings sit in an unlisted (not encrypted) gist.
+Waypoint reads the gist through GitHub's API without a token. A relayed workout within 5 minutes of one Waypoint already has is skipped (this also drops the second copy Strava writes back into Health). A workout matching a session logged by hand in Waypoint (same day, same activity family, minutes within 25% or 8 minutes; any strength session that day) is linked to it, keeping the hand-entered pain and effort. Deleting a relayed workout in Waypoint keeps it from returning. Weigh-ins typed by hand are never overwritten. The Shortcut runs from automations (Wyze closed, Fitness or Strava closed, and a daily time) because Health can't be read while the iPhone is locked. Full steps are in the app under Shortcut setup steps. Privacy cost: those readings sit in an unlisted, not encrypted, gist.
 
-Tested 2026-10-01 in headless Chromium against mocked Strava and GitHub endpoints: 30 checks covering token exchange, linking versus importing, posting rules, the Health relay parser (ISO and "Sep 29, 2026 at 7:02 AM" dates, kg, fractional body fat), backups, delete-stays-deleted, and the Safari code fallback. Not yet run against the live Strava and GitHub services.
+**Strava.** Strava's API has required a paid Strava subscription since June 2026 (developers.strava.com, Getting Started), and Hilary chose not to subscribe, so Waypoint has no Strava connection. Version 1.2.0 had one; 1.3.0 removed it. Instead:
+- Strava into Waypoint: Strava's Apple Health connection writes its activities into Health, and the Shortcut carries them here.
+- Waypoint into Strava: Strava imports only workouts recorded in Apple's Workout app, not ones other apps write to Health. To get a Waypoint session onto Strava, start the matching Watch workout (Strength Training, Indoor Run, Indoor Rower) at the same time; it reaches Strava on its own, and the relay links it to the Waypoint session. The Waypoint exercise list does not reach Strava.
+
+Tested 2026-10-01 in headless Chromium against a mocked gist: 23 checks covering workout import and linking, the Strava duplicate, km and kg conversion, fractional body fat, both date formats, hand-entered values winning, delete-stays-deleted, the missing-gist error, and the Settings sheet. The Shortcut itself, and the live GitHub API call, are untested until the first real run on the phone.
 
 ## Apple Watch data (manual export)
 
@@ -138,7 +141,7 @@ Change the files, bump `VERSION` in `sw.js` and `APP_VERSION` in `app.js`, and p
 
 ## Limits compared with a native app
 
-- No direct Apple Health access; Watch data comes through Strava and a Shortcut-written gist (see above), or the export file.
+- No direct Apple Health access; Watch and Strava data come through a Shortcut-written gist (see above), or the export file.
 - No push reminders (web push needs a server). An iOS Shortcuts personal automation (Time of Day > Open App) can open Waypoint each morning for the check-in.
 - iOS may pause timers when the screen locks; the timers request a screen wake lock, so keep the screen on during guided sessions.
 - Fitness education, not medical advice.
@@ -150,7 +153,7 @@ Change the files, bump `VERSION` in `sw.js` and `APP_VERSION` in `app.js`, and p
 | `index.html` | Layout, styles, icons |
 | `figure.js` | Stick-figure animation engine |
 | `data.js` | Exercise library, progression chains, templates, tests, guides |
-| `sync.js` | Strava two-way sync, Apple Health gist relay, their Settings sheet |
+| `sync.js` | Apple Health gist relay and its Settings sheet |
 | `engine.js` | Heart-rate zones, weight trend, energy estimate, readiness, session building, progression |
 | `app.js` | Storage, Today, check-in, timers |
 | `app2.js` | Session player, cardio, Train |
