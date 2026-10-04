@@ -20,7 +20,7 @@ function renderFood() {
       ${items.map((f) => `<button class="food" data-act="editfood" data-id="${f.id}"><div class="grow"><div>${esc(f.name)}</div>${f.qty && f.qty !== 1 ? `<div class="muted tiny">${r1(f.qty)} × ${esc(f.serving || 'serving')}</div>` : f.serving ? `<div class="muted tiny">${esc(f.serving)}</div>` : ''}</div><div class="end">${Math.round(f.kcal)} kcal<br>${r1(f.protein || 0)} g</div></button>`).join('')}
       <button class="linkbtn small" data-act="addfood" data-meal="${m}" style="padding:6px 0">${ic('plus')} Add</button></div>`;
   }
-  h += `<div class="row" style="margin-top:14px"><button class="btn ghost grow sm" data-act="copyday">Copy yesterday</button><button class="btn ghost grow sm" data-act="recipes">Recipes (${S.recipes.length})</button></div>
+  h += `<div class="row" style="margin-top:14px"><button class="btn ghost grow sm" data-act="copyday">Copy yesterday</button><button class="btn ghost grow sm" data-act="recipes">Recipes (${S.recipes.length})</button><button class="btn ghost grow sm" data-act="groceries">Groceries</button></div>
     <div class="card"><h3>How targets are set</h3><div class="kv"><span>Burn estimate</span><span>${e.estimate} kcal/day</span><span>Method</span><span>${e.adaptive ? `adaptive (${e.loggedDays} logged days)` : 'formula until 2 weeks of data'}</span><span>Planned loss</span><span>${t.rate}%/wk ≈ ${t.deficit} kcal/day deficit</span><span>Protein</span><span>${S.profile.proteinPerKg} g/kg of ${S.profile.goalWeight ? 'goal' : 'current'} weight</span></div>
     <p class="muted tiny" style="margin:8px 0 0">Log every day, even rough days; skipped days count as "not logged" and are left out of the estimate.</p></div>`;
   main().innerHTML = h;
@@ -264,6 +264,125 @@ function editRecipe(r, onDone) {
     }
   });
 }
+/* ================= GROCERIES ================= */
+// Pick upcoming menu dinners (or any recipe); their "shop" lines combine into one list grouped by store section.
+// State lives in meta 'grocery' so picks and check-offs survive a reload.
+const G_SECTIONS = ['Produce', 'Meat & seafood', 'Dairy & eggs', 'Bread & tortillas', 'Pasta, rice & grains', 'Canned & jarred', 'Frozen', 'Snacks & chips', 'Other'];
+const G_STAPLES = 'Pantry staples';
+async function gLoad() { const g = await DB.meta('grocery', null); return { picks: [], got: {}, extras: [], ...(g || {}) }; }
+function gSave(g) { return DB.setMeta('grocery', g); }
+function gFrac(q) {
+  const w = Math.floor(q + 1e-9), f = q - w; const F = [[0, ''], [0.125, '1/8'], [0.175, '1/6'], [0.25, '1/4'], [0.33, '1/3'], [0.5, '1/2'], [0.67, '2/3'], [0.75, '3/4'], [1, '']];
+  let best = F[0]; for (const c of F) if (Math.abs(c[0] - f) < Math.abs(best[0] - f)) best = c;
+  const whole = best[0] === 1 ? w + 1 : w; return [whole || '', best[1]].filter(Boolean).join(' ') || '0';
+}
+function gShopLines(r, seen = new Set()) {
+  if (!r || seen.has(r.id)) return []; seen.add(r.id);
+  let out = (r.shop || []).map((l) => ({ ...l, from: r.name }));
+  for (const id of r.shopIncludes || []) out = out.concat(gShopLines(S.recipes.find((x) => x.id === id), seen).map((l) => ({ ...l, from: r.name })));
+  return out;
+}
+function gBuild(g) {
+  const items = new Map();
+  for (const p of g.picks) {
+    const r = S.recipes.find((x) => x.id === p.rid); if (!r) continue;
+    for (const l of gShopLines(r)) {
+      const key = l.item.toLowerCase(); let it = items.get(key);
+      if (!it) { it = { key, item: l.item, sec: l.sec || 'Other', units: new Map(), from: new Set() }; items.set(key, it); }
+      it.units.set(l.u || '', (it.units.get(l.u || '') || 0) + (+l.q || 0)); it.from.add(l.from);
+    }
+  }
+  for (const x of g.extras) items.set('x:' + x.id, { key: 'x:' + x.id, item: x.text, sec: 'Added by hand', units: new Map(), from: new Set(), extra: x.id });
+  const VOL = { tsp: 1, Tbsp: 3, cup: 48 };
+  const qty = (it) => {
+    let us = [...it.units]; const vol = us.filter(([u]) => VOL[u]);
+    if (vol.length > 1) { const t = vol.reduce((s, [u, q]) => s + q * VOL[u], 0); const u = t >= 12 ? 'cup' : t >= 3 ? 'Tbsp' : 'tsp'; us = us.filter(([x]) => !VOL[x]).concat([[u, t / VOL[u]]]); }
+    return us.map(([u, q]) => `${gFrac(q)}${u ? ' ' + u : ''}`).join(' + ');
+  };
+  const groups = [...G_SECTIONS, 'Added by hand', G_STAPLES].map((s) => ({ sec: s, items: [...items.values()].filter((i) => i.sec === s || (s === 'Other' && ![...G_SECTIONS, 'Added by hand', G_STAPLES].includes(i.sec))).sort((a, b) => a.item.localeCompare(b.item)) })).filter((x) => x.items.length);
+  return { groups, qty, count: items.size };
+}
+async function openGroceries() {
+  let g = await gLoad(); let tab = g.picks.length ? 'list' : 'plan';
+  const el = sheet(`<header><button class="txtbtn l" data-a="x">Done</button><div class="ttl">Groceries</div><button class="txtbtn r" data-a="share">Share</button></header><div class="scroll"><div style="margin:4px 0 10px">${seg('gt', [['plan', 'Pick dinners'], ['list', 'Shopping list']], tab)}</div><div id="gb"></div></div>`);
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const draw = () => {
+    $$('[data-seg="gt"] button', el).forEach((b) => b.classList.toggle('on', b.dataset.v === tab));
+    const box = $('#gb', el); const picked = new Set(g.picks.map((p) => `${p.date || ''}|${p.rid}`));
+    if (tab === 'plan') {
+      let h = ''; const today = todayKey();
+      if (!S.recipes.length) h += '<p class="muted small">No recipes yet. Import the food library in Settings > Family menu.</p>';
+      else if (!S.profile.menuStart) h += '<p class="muted small">Set the menu cycle start date in Settings > Family menu to see upcoming dinners.</p>';
+      else {
+        h += `<p class="muted small">Check the dinners you are shopping for. Saturdays: ${S.profile.saturday === 'soup' ? 'soup season' : 'grill season, soups hidden'}.</p><div class="card list">`;
+        for (let i = 0; i < 14; i++) {
+          const d = addDays(today, i); const m = menuPos(d); const rs = menuFor(d);
+          const label = `${fmtShort(d)}${i === 0 ? ' (today)' : ''} · Wk ${m.week}`;
+          if (!rs.length) { h += `<div class="row" style="padding:10px 0;opacity:.6"><div class="grow small">${label}<div class="sub">${m.dow === 0 ? 'Leftovers or breakfast for dinner' : m.dow === 6 ? 'Grill night' : 'Nothing on the menu'}</div></div></div>`; continue; }
+          for (const r of rs) {
+            const k = `${d}|${r.id}`; const none = !gShopLines(r).length;
+            h += `<label><div class="grow"><div class="tiny muted">${label}</div>${esc(r.name)}${none ? `<div class="sub">${esc(r.shopNote || 'nothing to buy')}</div>` : ''}</div><input type="checkbox" data-pick="${esc(k)}" ${picked.has(k) ? 'checked' : ''} ${none ? 'disabled' : ''}></label>`;
+          }
+        }
+        h += '</div>';
+      }
+      const others = g.picks.filter((p) => !p.date);
+      h += `<div class="sect">Other recipes</div><div class="card">${others.map((p) => { const r = S.recipes.find((x) => x.id === p.rid); return r ? `<span class="chip">${esc(r.name)} <button data-a="rmo" data-rid="${esc(p.rid)}">${ic('x')}</button></span>` : ''; }).join(' ') || '<p class="muted small" style="margin:0">Add a bonus or off-cycle recipe.</p>'}
+        <div class="row" style="margin-top:8px"><select class="field grow" id="go"><option value="">Choose a recipe</option>${[...S.recipes].filter((r) => gShopLines(r).length).sort((a, b) => a.name.localeCompare(b.name)).map((r) => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}</select><button class="btn sm" data-a="addo">Add</button></div></div>
+        <button class="btn block" data-a="tolist" style="margin-top:14px">Show shopping list (${g.picks.length} picked)</button>`;
+      box.innerHTML = h; return;
+    }
+    const L = gBuild(g); let h = '';
+    if (!L.count) h += '<p class="muted small">Nothing on the list yet. Pick dinners first.</p>';
+    else {
+      const left = [...L.groups].filter((x) => x.sec !== G_STAPLES).reduce((s, x) => s + x.items.filter((i) => !g.got[i.key]).length, 0);
+      h += `<p class="muted small">${g.picks.length} dinner${g.picks.length === 1 ? '' : 's'} · ${left} item${left === 1 ? '' : 's'} left to get. Tap an item when it is in the cart.</p>`;
+    }
+    const row = (i) => `<label class="${g.got[i.key] ? 'gotit' : ''}"><div class="grow"><div>${esc(cap(i.item))}</div>${i.from.size ? `<div class="sub">${esc([...i.from].join(', '))}</div>` : ''}</div><span class="end small">${esc(L.qty(i))}</span><input type="checkbox" data-got="${esc(i.key)}" ${g.got[i.key] ? 'checked' : ''}>${i.extra ? `<button class="iconbtn" data-a="rmx" data-xid="${esc(i.extra)}">${ic('x')}</button>` : ''}</label>`;
+    for (const grp of L.groups) {
+      if (grp.sec === G_STAPLES) h += `<details class="card" ${g.openStaples ? 'open' : ''} id="gst"><summary><b>Check the pantry</b> <span class="muted small">(${grp.items.length} staples)</span></summary><div class="list">${grp.items.map(row).join('')}</div></details>`;
+      else h += `<div class="sect">${esc(grp.sec)}</div><div class="card list">${grp.items.map(row).join('')}</div>`;
+    }
+    h += `<div class="sect">Add an item</div><div class="card"><div class="row"><input class="field grow" id="gx" placeholder="e.g. milk, coffee" enterkeyhint="done"><button class="btn sm" data-a="addx">Add</button></div></div>
+      <button class="btn ghost block" data-a="newlist" style="margin-top:14px">Start a new list</button>`;
+    box.innerHTML = h;
+  };
+  draw();
+  const save = async () => { await gSave(g); };
+  el.addEventListener('change', async (ev) => {
+    const t = ev.target;
+    if (t.dataset.pick) { const [date, rid] = t.dataset.pick.split('|'); g.picks = g.picks.filter((p) => !(p.date === date && p.rid === rid)); if (t.checked) g.picks.push({ date, rid }); await save(); draw(); }
+    if (t.dataset.got) { if (t.checked) g.got[t.dataset.got] = true; else delete g.got[t.dataset.got]; await save(); draw(); }
+  });
+  el.addEventListener('toggle', async (ev) => { if (ev.target.id === 'gst') { g.openStaples = ev.target.open; await save(); } }, true);
+  el.addEventListener('keydown', (ev) => { if (ev.target.id === 'gx' && ev.key === 'Enter') { ev.preventDefault(); $('[data-a="addx"]', el).click(); } });
+  el.addEventListener('click', async (ev) => {
+    const sv = ev.target.closest('[data-seg="gt"] button'); if (sv) { tab = sv.dataset.v; draw(); return; }
+    const a = ev.target.closest('[data-a]'); if (!a) return;
+    switch (a.dataset.a) {
+      case 'x': el.remove(); render(); break;
+      case 'tolist': tab = 'list'; draw(); break;
+      case 'addo': { const rid = $('#go', el).value; if (rid && !g.picks.some((p) => !p.date && p.rid === rid)) { g.picks.push({ date: '', rid }); await save(); draw(); } break; }
+      case 'rmo': ev.preventDefault(); g.picks = g.picks.filter((p) => !(!p.date && p.rid === a.dataset.rid)); await save(); draw(); break;
+      case 'addx': { const v = $('#gx', el).value.trim(); if (v) { g.extras.push({ id: uid(), text: v }); await save(); draw(); } break; }
+      case 'rmx': ev.preventDefault(); g.extras = g.extras.filter((x) => x.id !== a.dataset.xid); delete g.got['x:' + a.dataset.xid]; await save(); draw(); break;
+      case 'newlist': if (confirm('Start a new list? This clears the picked dinners, check marks and added items.')) { g = { picks: [], got: {}, extras: [], openStaples: g.openStaples }; await save(); tab = 'plan'; draw(); } break;
+      case 'share': {
+        const L = gBuild(g); if (!L.count) return toast('Nothing on the list yet');
+        const dates = g.picks.filter((p) => p.date).map((p) => p.date).sort();
+        let txt = `Groceries${dates.length ? ` for ${fmtShort(dates[0])}${dates.length > 1 ? ` to ${fmtShort(dates[dates.length - 1])}` : ''}` : ''}\n`;
+        for (const grp of L.groups) {
+          const its = grp.items.filter((i) => !g.got[i.key]); if (!its.length) continue;
+          txt += `\n${grp.sec === G_STAPLES ? 'CHECK THE PANTRY' : grp.sec.toUpperCase()}\n` + its.map((i) => `• ${cap(i.item)}${L.qty(i) ? `: ${L.qty(i)}` : ''}`).join('\n') + '\n';
+        }
+        try { if (navigator.share) await navigator.share({ title: 'Groceries', text: txt }); else { await navigator.clipboard.writeText(txt); toast('List copied'); } }
+        catch (e) { if (e && e.name !== 'AbortError') { try { await navigator.clipboard.writeText(txt); toast('List copied'); } catch (_) { toast('Could not share'); } } }
+        break;
+      }
+    }
+  });
+}
+
 // Imports the food library file Claude maintains: { recipes: [...], foods: [...], menuStart }.
 // Recipes merge by id or name; foods merge into Saved foods by barcode or name. Nothing is deleted.
 async function importRecipes(file) {
@@ -841,6 +960,7 @@ function wire() {
       case 'editfood': openEditFood(a.dataset.id); break;
       case 'copyday': copyYesterday(); break;
       case 'recipes': openRecipes(); break;
+      case 'groceries': openGroceries(); break;
       case 'guide': openGuide(a.dataset.id); break;
       case 'lcat': S.learnCat = a.dataset.c; render(); break;
       case 'ljoint': S.learnJoint = S.learnJoint === a.dataset.j ? null : a.dataset.j; render(); break;
