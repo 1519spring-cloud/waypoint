@@ -96,9 +96,13 @@ label.f { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4
 .list > *:first-child { border-top: 0; }
 .list .sub { color: var(--muted); font-size: 13px; }
 .list .end { margin-left: auto; text-align: right; color: var(--muted); font-size: 14px; white-space: nowrap; }
-.list .gotit .grow > div:first-child { text-decoration: line-through; color: var(--muted); }
-.list .gotit { opacity: .7; }
-.list input[data-got], .list input[data-pick] { width: 24px; height: 24px; flex: none; accent-color: var(--accent); }
+.grow-row { display: flex; align-items: center; gap: 10px; width: 100%; color: inherit; font: inherit; -webkit-tap-highlight-color: transparent; }
+.grow-row:active { background: var(--surface2); }
+.gbox { flex: none; width: 28px; height: 28px; border-radius: 8px; border: 2px solid var(--muted); display: grid; place-items: center; }
+.gbox.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.gbox svg { width: 18px; height: 18px; }
+.list .have .nm { text-decoration: line-through; color: var(--muted); }
+.list .have .end { opacity: .5; }
 details.card > summary { cursor: pointer; padding: 2px 0; list-style-position: inside; }
 details.card[open] > summary { margin-bottom: 6px; }
 .stat3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
