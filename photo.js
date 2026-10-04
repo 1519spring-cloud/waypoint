@@ -24,25 +24,24 @@ const PHOTO = (() => {
     return { url, b64: url.split(',')[1], w: c.width, h: c.height };
   }
 
-  const TOOL = {
-    name: 'report_estimate',
-    description: 'Report the itemized calorie and protein estimate for the food in the photo.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        items: { type: 'array', items: { type: 'object', properties: {
-          name: { type: 'string', description: 'Short food name, e.g. "Grilled chicken thigh"' },
-          portion: { type: 'string', description: 'Household measure as seen, e.g. "1 cup", "2 slices", "about 5 oz"' },
-          grams: { type: 'number' },
-          kcal: { type: 'number' },
-          protein_g: { type: 'number' },
-          confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
-        }, required: ['name', 'portion', 'kcal', 'protein_g', 'confidence'] } },
-        not_food: { type: 'boolean', description: 'True if the photo shows no food' },
-        notes: { type: 'string', description: 'One or two plain sentences: what drove the estimate and what would change it most (hidden oil, sauce, portion depth). American English.' },
-      },
-      required: ['items', 'notes'],
+  // Structured outputs (output_config.format, json_schema). Sonnet 5.5 rejects forced tool_choice ("any"/"tool"),
+  // so the fixed JSON shape comes from the schema instead (platform.claude.com structured-outputs, checked 2026-10-04).
+  const SCHEMA = {
+    type: 'object',
+    properties: {
+      items: { type: 'array', items: { type: 'object', properties: {
+        name: { type: 'string', description: 'Short food name, e.g. "Grilled chicken thigh"' },
+        portion: { type: 'string', description: 'Household measure as seen, e.g. "1 cup", "2 slices", "about 5 oz"' },
+        grams: { type: 'number' },
+        kcal: { type: 'number' },
+        protein_g: { type: 'number' },
+        confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
+      }, required: ['name', 'portion', 'grams', 'kcal', 'protein_g', 'confidence'], additionalProperties: false } },
+      not_food: { type: 'boolean', description: 'True if the photo shows no food' },
+      notes: { type: 'string', description: 'One or two plain sentences: what drove the estimate and what would change it most (hidden oil, sauce, portion depth). American English.' },
     },
+    required: ['items', 'not_food', 'notes'],
+    additionalProperties: false,
   };
 
   function prompt(ctx) {
@@ -56,35 +55,44 @@ const PHOTO = (() => {
     return t;
   }
 
+  const HEADERS = (key) => ({ 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' });
+  function parseJSON(t) {
+    if (!t) return null;
+    try { return JSON.parse(t); } catch (_) { /* fall through */ }
+    const a = t.indexOf('{'), b = t.lastIndexOf('}'); if (a < 0 || b <= a) return null;
+    try { return JSON.parse(t.slice(a, b + 1)); } catch (_) { return null; }
+  }
+  async function call(key, body) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: HEADERS(key), body: JSON.stringify(body) });
+    return { res, j: await res.json().catch(() => ({})) };
+  }
   async function estimate(img, ctx) {
     const key = await getKey(); if (!key) throw new Error('Add your Anthropic API key in Settings first.');
     if (!navigator.onLine) throw new Error('Photo estimates need a connection.');
-    const body = {
-      model: MODEL, max_tokens: 1500,
-      tools: [TOOL], tool_choice: { type: 'tool', name: 'report_estimate' },
-      messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: img.b64 } },
-        { type: 'text', text: prompt(ctx) },
-      ] }],
-    };
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify(body),
-    });
-    const j = await res.json().catch(() => ({}));
+    const content = [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: img.b64 } },
+      { type: 'text', text: prompt(ctx) },
+    ];
+    let { res, j } = await call(key, { model: MODEL, max_tokens: 1500, output_config: { format: { type: 'json_schema', schema: SCHEMA } }, messages: [{ role: 'user', content }] });
+    let m = (j.error && j.error.message) || '';
+    // If the API ever rejects the schema request, fall back once to plain JSON by instruction.
+    if (res.status === 400 && /output_config|json_schema|schema|format/i.test(m)) {
+      const plain = [content[0], { type: 'text', text: prompt(ctx) + '\n\nReply with only a JSON object, no other text, with keys: items (array of {name, portion, grams, kcal, protein_g, confidence: "low"|"medium"|"high"}), not_food (boolean), notes (string).' }];
+      ({ res, j } = await call(key, { model: MODEL, max_tokens: 1500, messages: [{ role: 'user', content: plain }] }));
+      m = (j.error && j.error.message) || '';
+    }
     if (!res.ok) {
-      const m = (j.error && j.error.message) || `HTTP ${res.status}`;
+      m = m || `HTTP ${res.status}`;
       if (res.status === 401) throw new Error('The API key was refused. Check it in Settings.');
       if (/credit balance/i.test(m)) throw new Error('Your Anthropic account is out of credit. Add credit at console.anthropic.com, Billing.');
       if (res.status === 529 || res.status === 503) throw new Error('Claude is busy right now. Try again in a minute.');
       throw new Error(m);
     }
-    const tu = (j.content || []).find((c) => c.type === 'tool_use');
-    if (!tu) throw new Error('No estimate came back. Try again.');
+    const out = parseJSON(((j.content || []).find((c) => c.type === 'text') || {}).text);
+    if (!out || !Array.isArray(out.items)) throw new Error(j.stop_reason === 'refusal' ? 'Claude declined to estimate that photo.' : 'No estimate came back. Try again.');
     const u = j.usage || {}; const cost = ((u.input_tokens || 0) * PRICE.in + (u.output_tokens || 0) * PRICE.out) / 1e6;
     const spent = (await DB.meta('photoSpend', { n: 0, usd: 0 })); spent.n++; spent.usd += cost; await DB.setMeta('photoSpend', spent);
-    return { ...tu.input, cost };
+    return { ...out, cost };
   }
 
   async function testKey(key) {
