@@ -1,6 +1,6 @@
 /* Waypoint app, part 1: core, storage, Today, check-in, session player, timers, cardio, Train. */
 'use strict';
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.5.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -23,13 +23,13 @@ function toast(msg, ms = 2400) {
 }
 
 /* ---------- IndexedDB ---------- */
-const STORES = ['meta', 'days', 'sessions', 'food', 'favs', 'prog', 'assess'];
-const KEYS = { meta: 'key', days: 'key', sessions: 'id', food: 'id', favs: 'id', prog: 'id', assess: 'id' };
+const STORES = ['meta', 'days', 'sessions', 'food', 'favs', 'prog', 'assess', 'recipes'];
+const KEYS = { meta: 'key', days: 'key', sessions: 'id', food: 'id', favs: 'id', prog: 'id', assess: 'id', recipes: 'id' };
 const DB = {
   db: null,
   open() {
     return new Promise((res, rej) => {
-      const r = indexedDB.open('waypoint', 1);
+      const r = indexedDB.open('waypoint', 2);
       r.onupgradeneeded = () => { const d = r.result; for (const s of STORES) if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: KEYS[s] }); };
       r.onsuccess = () => { this.db = r.result; res(); };
       r.onerror = () => rej(r.error);
@@ -49,13 +49,13 @@ const DB = {
 
 /* ---------- state ---------- */
 const S = {
-  profile: null, days: {}, sessions: [], food: [], favs: [], prog: {}, assess: [],
+  profile: null, days: {}, sessions: [], food: [], favs: [], prog: {}, assess: [], recipes: [],
   view: 'today', foodDay: null, progTab: 'body', wRange: '90', learnCat: 'All', learnQ: '', lastBackup: null, updateReady: null, active: null,
 };
 const DEFAULT_PROFILE = {
   name: '', birthYear: null, sex: 'male', heightIn: 70, startWeight: null, goalWeight: null, lossRate: 0.5, proteinPerKg: 1.6, activity: 1.5,
   backLevel: 3, runStage: 0, longRunMins: 45, cardioModes: ['run', 'trail', 'treadmill', 'row'], week: DEFAULT_WEEK.slice(),
-  startDate: null, deload: true, voice: true, restStrength: 90, restOther: 45, hrMaxOverride: null, rtr: [],
+  startDate: null, deload: true, voice: true, restStrength: 90, restOther: 45, hrMaxOverride: null, rtr: [], menuStart: null, saturday: 'grill',
 };
 async function loadAll() {
   S.profile = await DB.meta('profile', null);
@@ -64,6 +64,7 @@ async function loadAll() {
   S.sessions = await DB.all('sessions');
   S.food = await DB.all('food');
   S.favs = await DB.all('favs');
+  S.recipes = await DB.all('recipes');
   S.prog = Object.fromEntries((await DB.all('prog')).map((p) => [p.id, p]));
   S.assess = await DB.all('assess');
   S.lastBackup = await DB.meta('lastBackup', null);

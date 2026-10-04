@@ -49,6 +49,8 @@ What no app in the scan does, and Waypoint does: builds the whole program around
 - Protein and calorie targets. Default: lose 0.5% of body weight per week; protein 1.6 g per kg of goal weight.
 - Quick add, recent foods, saved foods, copy yesterday.
 - Barcode scan (camera) and barcode lookup through Open Food Facts; text search of Open Food Facts. Both need a connection; saved foods work offline.
+- Recipes (1.5.0): each recipe stores its ingredient lines with calories and protein for the whole batch and logs as one portion. Recipes can be placed on the family's 7-week dinner menu; the Food page then shows "On the menu" with a Log it button. Settings > Family menu holds the cycle start date (a Monday that was Week 1) and the Saturday switch: Grill (summer) hides the Saturday soups, Soup (winter) shows them.
+- Import recipes and foods: Settings > Family menu > Import recipes and foods takes the Waypoint food library .json file Claude maintains in Drive (Claude/Projects/Waypoint-recipes). Re-importing updates recipes by id and adds nothing twice; nothing is deleted.
 
 **Progress**
 - Weight and trend, 14-day calories and protein, energy estimate details, back pain from check-ins.

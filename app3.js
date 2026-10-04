@@ -12,13 +12,15 @@ function renderFood() {
   let h = `<div class="row" style="justify-content:space-between;margin:4px 0"><button class="btn ghost sm" data-act="fday" data-d="-1">${ic('back')}</button><b>${fmtShort(k)}</b><button class="btn ghost sm" data-act="fday" data-d="1" ${k >= todayKey() ? 'disabled' : ''}>${ic('chev')}</button></div>`;
   h += `<div class="card"><div class="rings">${ring(kc, t.kcal, 'calories', '')}${ring(pr, t.protein, 'protein', ' g')}</div>
     <p class="small" style="margin:10px 0 0">${kc <= t.kcal ? `${t.kcal - Math.round(kc)} calories left` : `${Math.round(kc) - t.kcal} over`} · ${pr >= t.protein ? 'protein goal met' : `${t.protein - Math.round(pr)} g protein to go (aim for ${t.perMeal} g or more per meal)`}</p></div>`;
+  const tonight = menuFor(k);
+  if (tonight.length) h += `<div class="banner">On the menu ${k === todayKey() ? 'tonight' : 'this day'}: ${tonight.map((r) => esc(r.name)).join(', ')}<button data-act="addfood" data-meal="Dinner">Log it</button></div>`;
   for (const m of MEALS) {
     const items = list.filter((f) => f.meal === m);
     h += `<div class="meal"><h4>${m}<span>${items.length ? `${Math.round(items.reduce((s, f) => s + f.kcal, 0))} kcal · ${Math.round(items.reduce((s, f) => s + (f.protein || 0), 0))} g` : ''}</span></h4>
       ${items.map((f) => `<button class="food" data-act="editfood" data-id="${f.id}"><div class="grow"><div>${esc(f.name)}</div>${f.qty && f.qty !== 1 ? `<div class="muted tiny">${r1(f.qty)} × ${esc(f.serving || 'serving')}</div>` : f.serving ? `<div class="muted tiny">${esc(f.serving)}</div>` : ''}</div><div class="end">${Math.round(f.kcal)} kcal<br>${r1(f.protein || 0)} g</div></button>`).join('')}
       <button class="linkbtn small" data-act="addfood" data-meal="${m}" style="padding:6px 0">${ic('plus')} Add</button></div>`;
   }
-  h += `<div class="row" style="margin-top:14px"><button class="btn ghost grow sm" data-act="copyday">Copy yesterday</button></div>
+  h += `<div class="row" style="margin-top:14px"><button class="btn ghost grow sm" data-act="copyday">Copy yesterday</button><button class="btn ghost grow sm" data-act="recipes">Recipes (${S.recipes.length})</button></div>
     <div class="card"><h3>How targets are set</h3><div class="kv"><span>Burn estimate</span><span>${e.estimate} kcal/day</span><span>Method</span><span>${e.adaptive ? `adaptive (${e.loggedDays} logged days)` : 'formula until 2 weeks of data'}</span><span>Planned loss</span><span>${t.rate}%/wk ≈ ${t.deficit} kcal/day deficit</span><span>Protein</span><span>${S.profile.proteinPerKg} g/kg of ${S.profile.goalWeight ? 'goal' : 'current'} weight</span></div>
     <p class="muted tiny" style="margin:8px 0 0">Log every day, even rough days; skipped days count as "not logged" and are left out of the estimate.</p></div>`;
   main().innerHTML = h;
@@ -42,13 +44,14 @@ function openAddFood(k, meal) {
   let tab = 'recent';
   const el = sheet(`<header><button class="txtbtn l" data-a="x">Done</button><div class="ttl">Add food<small>${fmtShort(k)}</small></div><span style="min-width:64px"></span></header>
     <div class="scroll"><label class="f" style="margin-top:4px">Meal</label>${seg('meal', MEALS.map((m) => [m, m]), meal)}
-    <div style="margin-top:10px">${seg('tab', [['recent', 'Recent'], ['saved', 'Saved'], ['quick', 'Quick'], ['search', 'Search'], ['scan', 'Scan']], tab)}</div><div id="ft"></div></div>`);
+    <div style="margin-top:10px">${seg('tab', [['recent', 'Recent'], ['recipes', 'Recipes'], ['saved', 'Saved'], ['quick', 'Quick'], ['search', 'Search'], ['scan', 'Scan']], tab)}</div><div id="ft"></div></div>`);
   const pane = $('#ft', el); const curMeal = () => segVal(el, 'meal');
   const listHtml = (arr) => `<div class="card list">${arr.map((f, i) => `<button data-i="${i}"><div class="grow"><div>${esc(f.name)}</div><div class="sub">${esc(f.serving || '1 serving')}</div></div><span class="end">${Math.round(f.kcal1 ?? f.kcal)} kcal<br>${r1(f.protein1 ?? f.protein ?? 0)} g</span></button>`).join('') || '<p class="muted small">Nothing here yet. Use Quick, Search or Scan; foods you log appear here.</p>'}</div>`;
   let arr = [];
   const draw = () => {
     stopCam();
     if (tab === 'recent') { arr = recentFoods(); pane.innerHTML = listHtml(arr); }
+    if (tab === 'recipes') { arr = recipesSorted(k); pane.innerHTML = recipeListHtml(arr, k); }
     if (tab === 'saved') { arr = [...S.favs].sort((a, b) => (b.uses || 0) - (a.uses || 0)); pane.innerHTML = listHtml(arr); }
     if (tab === 'quick') pane.innerHTML = `<div class="card"><label class="f">Name</label><input class="field" id="qn" placeholder="e.g. Chicken salad"><div class="row"><div class="grow"><label class="f">Calories</label><input class="field" id="qk" type="number" inputmode="numeric"></div><div class="grow"><label class="f">Protein (g)</label><input class="field" id="qp" type="number" inputmode="decimal"></div></div>
       <label class="f">Serving (optional)</label><input class="field" id="qs" placeholder="e.g. 1 bowl"><label class="row small" style="margin-top:10px"><input type="checkbox" id="qf" checked> Save to Saved foods</label><button class="btn block" style="margin-top:12px" data-a="qadd">Add</button></div>`;
@@ -56,11 +59,13 @@ function openAddFood(k, meal) {
     if (tab === 'scan') pane.innerHTML = `<div class="card"><video class="cam" id="cam" playsinline muted></video><div class="row" style="margin-top:8px"><button class="btn grow" data-a="camon">${ic('cam')} Scan barcode</button></div>
       <label class="f">Or type the barcode</label><div class="row"><input class="field grow" id="bc" inputmode="numeric" placeholder="UPC / EAN"><button class="btn" data-a="bcgo">Look up</button></div><p class="muted tiny">Looks up Open Food Facts (needs a connection). Saved barcodes work offline.</p><div id="br"></div></div>`;
   };
-  const pick = (item) => servingsDialog(item, async (qty, it) => { await addFood(k, curMeal(), it, qty); await saveFav(it); toast(`Added ${it.name}`); render(); });
+  const pick = (item) => servingsDialog(item, async (qty, it) => { await addFood(k, curMeal(), it, qty); if (!it.recipeId) await saveFav(it); toast(`Added ${it.name}`); render(); });
   wireSeg(el, (n, v) => { if (n === 'tab') { tab = v; draw(); } });
   el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target.id === 'sq') $('[data-a="sgo"]', el).click(); });
   el.addEventListener('click', async (ev) => {
     const it = ev.target.closest('[data-i]'); if (it && (tab === 'recent' || tab === 'saved')) return pick(arr[+it.dataset.i]);
+    if (it && tab === 'recipes') { const rc = arr[+it.dataset.i]; return pick({ name: rc.name, serving: 'portion', kcal1: rc.kcal, protein1: rc.protein, recipeId: rc.id }); }
+    if (ev.target.closest('[data-a="recipes"]')) { openRecipes(); return; }
     const r = ev.target.closest('[data-r]'); if (r) return pick(JSON.parse(r.dataset.r));
     const a = ev.target.closest('[data-a]'); if (!a) return;
     switch (a.dataset.a) {
@@ -189,6 +194,102 @@ async function copyYesterday() {
   if (S.food.some((f) => f.date === k) && !confirm('Add the previous day\'s foods to this day too?')) return;
   for (const f of items) { const n = { ...f, id: uid(), date: k, at: new Date().toISOString() }; S.food.push(n); await DB.put('food', n); }
   render(); toast(`Copied ${items.length} items`);
+}
+
+/* ================= RECIPES ================= */
+// A recipe stores per-portion calories and protein plus the ingredient lines they were calculated from.
+// cycle: [{week:1-7, dow:0-6}] places it on the 7-week family menu (dow 0 = Sunday).
+function menuPos(k) {
+  const st = S.profile.menuStart; if (!st) return null;
+  // weeks of the cycle begin on the weekday of the start date
+  const d = diffDays(st, k); const wk = ((Math.floor(d / 7) % 7) + 7) % 7 + 1; return { week: wk, dow: parseDay(k).getDay() };
+}
+function menuFor(k) { const m = menuPos(k); if (!m) return []; const soup = S.profile.saturday === 'soup'; return S.recipes.filter((r) => (!r.soup || soup) && (r.cycle || []).some((c) => c.week === m.week && c.dow === m.dow)); }
+function recipesSorted(k) { const on = new Set(menuFor(k).map((r) => r.id)); return [...S.recipes].sort((a, b) => (on.has(b.id) - on.has(a.id)) || a.name.localeCompare(b.name)); }
+function recipeListHtml(arr, k) {
+  const on = new Set(menuFor(k).map((r) => r.id));
+  return `<div class="card list">${arr.map((r, i) => `<button data-i="${i}"><div class="grow"><div>${esc(r.name)} ${on.has(r.id) ? '<span class="pill g">on the menu</span>' : ''}</div><div class="sub">1 portion${r.servings ? ` (batch makes ${r.servings})` : ''}</div></div><span class="end">${Math.round(r.kcal)} kcal<br>${r1(r.protein)} g</span></button>`).join('') || '<p class="muted small">No recipes yet. Import a recipes file in Settings, or add one under Food, then Recipes.</p>'}</div>
+    <button class="linkbtn small" data-a="recipes" style="padding:6px 0">${ic('plus')} Manage recipes</button>`;
+}
+const DOWN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function openRecipes() {
+  const el = sheet(`<header><button class="txtbtn l" data-a="x">Close</button><div class="ttl">Recipes</div><button class="txtbtn r" data-a="new">New</button></header><div class="scroll" id="rl"></div>`);
+  const draw = () => {
+    const m = menuPos(todayKey());
+    $('#rl', el).innerHTML = `${m ? `<p class="muted small">Today is Week ${m.week}, ${DOWN[m.dow]} of the 7-week menu. Saturdays: ${S.profile.saturday === 'soup' ? 'soup season' : 'grill season, soups hidden'}.</p>` : '<p class="muted small">Set the menu cycle start date in Settings to see what is on the menu each day.</p>'}
+      <div class="card list">${[...S.recipes].sort((a, b) => a.name.localeCompare(b.name)).map((r) => `<button data-id="${r.id}"><div class="grow"><b>${esc(r.name)}</b><div class="sub">${(r.cycle || []).map((c) => `Wk ${c.week} ${DOWN[c.dow]}`).join(', ') || 'not on the cycle'}${r.soup ? ' · soup' : ''}${r.checked ? '' : ' · numbers not yet checked'}</div></div><span class="end">${Math.round(r.kcal)} kcal<br>${r1(r.protein)} g</span></button>`).join('') || '<p class="muted small">No recipes yet.</p>'}</div>`;
+  };
+  draw();
+  el.addEventListener('click', (ev) => {
+    const a = ev.target.closest('[data-a]'); if (a && a.dataset.a === 'x') { el.remove(); render(); return; }
+    if (a && a.dataset.a === 'new') return editRecipe(null, draw);
+    const b = ev.target.closest('[data-id]'); if (b) editRecipe(S.recipes.find((r) => r.id === b.dataset.id), draw);
+  });
+}
+function editRecipe(r, onDone) {
+  const x = r ? JSON.parse(JSON.stringify(r)) : { id: uid(), name: '', servings: 4, ingredients: [], cycle: [], checked: true };
+  const el = sheet(`<header><button class="txtbtn l" data-a="x">Cancel</button><div class="ttl">${r ? 'Edit recipe' : 'New recipe'}</div><button class="txtbtn r" data-a="save">Save</button></header><div class="scroll" id="re"></div>`);
+  const totals = () => { const t = x.ingredients.reduce((s, i) => ({ k: s.k + (+i.kcal || 0), p: s.p + (+i.protein || 0) }), { k: 0, p: 0 }); const n = Math.max(1, +x.servings || 1); return { k: t.k, p: t.p, pk: t.k / n, pp: t.p / n }; };
+  const draw = () => {
+    const t = totals();
+    $('#re', el).innerHTML = `<div class="card"><label class="f">Name</label><input class="field" data-f="name" value="${esc(x.name)}">
+      <label class="f">Portions the batch makes</label><input class="field" data-f="servings" type="number" inputmode="decimal" value="${x.servings}">
+      <p class="small" style="margin:10px 0 0"><b>Per portion: ${Math.round(t.pk)} kcal · ${r1(t.pp)} g protein</b> <span class="muted">(whole batch ${Math.round(t.k)} kcal, ${Math.round(t.p)} g)</span></p></div>
+      <div class="card"><h3>Ingredients (whole batch)</h3>${x.ingredients.map((i, n) => `<div class="row" style="margin:6px 0" data-n="${n}"><input class="field grow" data-g="text" value="${esc(i.text)}" placeholder="e.g. 1 lb chicken breast"><input class="field" style="width:70px" data-g="kcal" type="number" inputmode="numeric" value="${i.kcal ?? ''}" placeholder="kcal"><input class="field" style="width:60px" data-g="protein" type="number" inputmode="decimal" value="${i.protein ?? ''}" placeholder="g"><button class="iconbtn" data-a="rm">${ic('x')}</button></div>`).join('')}
+        <button class="linkbtn small" data-a="addi">${ic('plus')} Ingredient</button>${x.source ? `<p class="muted tiny">${esc(x.source)}</p>` : ''}</div>
+      <div class="card"><h3>On the 7-week menu</h3>${x.cycle.map((c, n) => `<span class="chip">Wk ${c.week} ${DOWN[c.dow]} <button data-a="rmc" data-n="${n}">${ic('x')}</button></span>`).join(' ') || '<span class="muted small">Not placed yet.</span>'}
+        <div class="row" style="margin-top:8px"><select class="field" id="cw">${[1, 2, 3, 4, 5, 6, 7].map((w) => `<option>${w}</option>`).join('')}</select><select class="field" id="cd">${DOWN.map((d, i) => `<option value="${i}">${d}</option>`).join('')}</select><button class="btn sm" data-a="addc">Add</button></div></div>
+      ${r ? '<button class="btn danger block" data-a="del">Delete recipe</button>' : ''}`;
+  };
+  draw();
+  el.addEventListener('input', (ev) => {
+    const f = ev.target.dataset.f; if (f) { x[f] = f === 'servings' ? num(ev.target.value) : ev.target.value; if (f === 'servings') { const t = totals(); const pEl = $('#re p.small b', el); if (pEl) pEl.textContent = `Per portion: ${Math.round(t.pk)} kcal · ${r1(t.pp)} g protein`; } return; }
+    const g = ev.target.dataset.g; if (g) { const i = x.ingredients[+ev.target.closest('[data-n]').dataset.n]; i[g] = g === 'text' ? ev.target.value : num(ev.target.value); const t = totals(); const pEl = $('#re p.small b', el); if (pEl) pEl.textContent = `Per portion: ${Math.round(t.pk)} kcal · ${r1(t.pp)} g protein`; }
+  });
+  el.addEventListener('click', async (ev) => {
+    const a = ev.target.closest('[data-a]'); if (!a) return;
+    switch (a.dataset.a) {
+      case 'x': el.remove(); break;
+      case 'addi': x.ingredients.push({ text: '', kcal: null, protein: null }); draw(); break;
+      case 'rm': x.ingredients.splice(+a.closest('[data-n]').dataset.n, 1); draw(); break;
+      case 'addc': { const c = { week: +$('#cw', el).value, dow: +$('#cd', el).value }; if (!x.cycle.some((y) => y.week === c.week && y.dow === c.dow)) x.cycle.push(c); draw(); break; }
+      case 'rmc': x.cycle.splice(+a.dataset.n, 1); draw(); break;
+      case 'del': if (confirm('Delete this recipe? Food already logged from it stays in your log.')) { await DB.del('recipes', x.id); S.recipes = S.recipes.filter((y) => y.id !== x.id); el.remove(); onDone && onDone(); } break;
+      case 'save': {
+        if (!x.name.trim()) return toast('Give it a name');
+        const t = totals(); x.kcal = Math.round(t.pk); x.protein = r1(t.pp); x.checked = true; x.updated = new Date().toISOString();
+        const i = S.recipes.findIndex((y) => y.id === x.id); if (i >= 0) S.recipes[i] = x; else S.recipes.push(x);
+        await DB.put('recipes', x); el.remove(); onDone && onDone(); toast('Recipe saved'); break;
+      }
+    }
+  });
+}
+// Imports the food library file Claude maintains: { recipes: [...], foods: [...], menuStart }.
+// Recipes merge by id or name; foods merge into Saved foods by barcode or name. Nothing is deleted.
+async function importRecipes(file) {
+  try {
+    const data = JSON.parse(await file.text());
+    const list = Array.isArray(data) ? data : (data.recipes || []);
+    const foods = Array.isArray(data.foods) ? data.foods : [];
+    if (!list.length && !foods.length) return toast('No recipes or foods found in that file');
+    let added = 0, updated = 0, fAdded = 0, fUpdated = 0;
+    for (const r of list) {
+      if (!r || !r.name || !Number.isFinite(+r.kcal)) continue;
+      const ex = S.recipes.find((y) => (r.id && y.id === r.id) || y.name.toLowerCase() === r.name.toLowerCase());
+      const rec = { ingredients: [], cycle: [], ...r, id: ex ? ex.id : (r.id || uid()), kcal: +r.kcal, protein: +r.protein || 0 };
+      if (ex) { Object.assign(ex, rec); updated++; } else { S.recipes.push(rec); added++; }
+      await DB.put('recipes', rec);
+    }
+    for (const f of foods) {
+      if (!f || !f.name || !Number.isFinite(+f.kcal)) continue;
+      const ex = S.favs.find((y) => (f.barcode && y.barcode === f.barcode) || y.name.toLowerCase() === f.name.toLowerCase());
+      const fav = { id: ex ? ex.id : (f.id || uid()), name: f.name, serving: f.serving || '', kcal1: +f.kcal, protein1: +f.protein || 0, barcode: f.barcode || (ex && ex.barcode) || null, uses: (ex && ex.uses) || 0, source: f.source || 'label' };
+      if (ex) { Object.assign(ex, fav); fUpdated++; } else { S.favs.push(fav); fAdded++; }
+      await DB.put('favs', fav);
+    }
+    if (data.menuStart && S.profile.menuStart !== data.menuStart) { S.profile.menuStart = data.menuStart; await saveProfile(); }
+    render(); toast(`Recipes: ${added} added, ${updated} updated. Foods: ${fAdded} added, ${fUpdated} updated.`, 5000);
+  } catch (e) { toast('Could not read that file: ' + e.message, 5000); }
 }
 
 /* ================= PROGRESS ================= */
@@ -480,6 +581,11 @@ async function openSettings() {
         <label><div class="grow">Rest after main lifts (s)</div><input class="field" style="width:80px" name="restStrength" type="number" value="${p.restStrength}"></label>
         <label><div class="grow">Rest after other sets (s)</div><input class="field" style="width:80px" name="restOther" type="number" value="${p.restOther}"></label>
         <label><div class="grow">Program start date</div><input class="field" style="width:160px" name="startDate" type="date" value="${p.startDate || ''}"></label></div>
+      <div class="sect">Family menu</div><div class="card list">
+        <label><div class="grow">Menu cycle: a date that was Week 1<div class="sub">a Monday; the 7-week menu repeats from it</div></div><input class="field" style="width:160px" name="menuStart" type="date" value="${p.menuStart || ''}"></label>
+        <label><div class="grow">Saturday dinners<div class="sub">soups show on the menu only in soup season</div></div><select class="field" style="width:130px" name="saturday"><option value="grill" ${p.saturday !== 'soup' ? 'selected' : ''}>Grill (summer)</option><option value="soup" ${p.saturday === 'soup' ? 'selected' : ''}>Soup (winter)</option></select></label>
+        <button data-a="recipes"><div class="grow">Recipes<div class="sub">${S.recipes.length} saved</div></div>${ic('chev')}</button>
+        <label><div class="grow">Import recipes and foods<div class="sub">the Waypoint food library .json file</div></div><input type="file" accept=".json,application/json" id="ri" style="width:120px"></label></div>
       <div class="sect">Sync</div><div class="card list">
         <button data-a="sync"><div class="grow">Apple Health sync<div class="sub">workouts and readings by Shortcut; Strava through Health</div></div>${ic('chev')}</button></div>
       <div class="sect">Data</div><div class="card list">
@@ -495,6 +601,7 @@ async function openSettings() {
     if (ev.target.id === 'hk' && ev.target.files[0]) { importHealth(ev.target.files[0]); ev.target.value = ''; }
     if (ev.target.id === 'wi' && ev.target.files[0]) { await importWeights(ev.target.files[0]); ev.target.value = ''; el.remove(); openSettings(); }
     if (ev.target.id === 'rs' && ev.target.files[0]) { await restoreBackup(ev.target.files[0]); ev.target.value = ''; }
+    if (ev.target.id === 'ri' && ev.target.files[0]) { await importRecipes(ev.target.files[0]); ev.target.value = ''; el.remove(); openSettings(); }
   });
   el.addEventListener('click', async (ev) => {
     const a = ev.target.closest('[data-a]'); if (!a) return;
@@ -503,12 +610,13 @@ async function openSettings() {
       case 'save': {
         readProfileForm(el, p); const g = (n) => $(`[name=${n}]`, el);
         p.activity = +g('activity').value; p.hrMaxOverride = num(g('hrmax').value); p.deload = g('deload').checked; p.voice = g('voice').checked;
-        p.restStrength = num(g('restStrength').value) || 90; p.restOther = num(g('restOther').value) || 45; p.startDate = g('startDate').value || p.startDate;
+        p.restStrength = num(g('restStrength').value) || 90; p.restOther = num(g('restOther').value) || 45; p.startDate = g('startDate').value || p.startDate; p.menuStart = g('menuStart').value || null; p.saturday = g('saturday').value;
         await saveProfile(); el.remove(); render(); toast('Saved'); break;
       }
       case 'schedule': openSchedule(); break;
       case 'level': openLevelPick(); break;
       case 'sync': WSYNC.openSettingsSheet(); break;
+      case 'recipes': openRecipes(); break;
       case 'backup': doBackup(); break;
       case 'csv': doCSV(); break;
       case 'erase': if (confirm('Erase all Waypoint data on this phone? Back up first if you want to keep it.') && confirm('Really erase everything?')) { for (const s of STORES) await DB.clear(s); location.reload(); } break;
@@ -732,6 +840,7 @@ function wire() {
       case 'addfood': openAddFood(S.foodDay || todayKey(), a.dataset.meal || defaultMeal()); break;
       case 'editfood': openEditFood(a.dataset.id); break;
       case 'copyday': copyYesterday(); break;
+      case 'recipes': openRecipes(); break;
       case 'guide': openGuide(a.dataset.id); break;
       case 'lcat': S.learnCat = a.dataset.c; render(); break;
       case 'ljoint': S.learnJoint = S.learnJoint === a.dataset.j ? null : a.dataset.j; render(); break;
