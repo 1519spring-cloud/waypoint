@@ -1,6 +1,6 @@
 // Waypoint service worker: cache-first app shell so the app opens with no network.
-const VERSION = 'waypoint-v1.6.1';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './figure.js', './data.js', './engine.js', './app.js', './app2.js', './sync.js', './app3.js',
+const VERSION = 'waypoint-v1.7.0';
+const SHELL = ['./', './index.html', './manifest.webmanifest', './figure.js', './data.js', './engine.js', './app.js', './app2.js', './sync.js', './photo.js', './app3.js',
   './jszip.min.js', './zxing.min.js', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {

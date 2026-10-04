@@ -53,7 +53,7 @@ function openAddFood(k, meal) {
     if (tab === 'recent') { arr = recentFoods(); pane.innerHTML = listHtml(arr); }
     if (tab === 'recipes') { arr = recipesSorted(k); pane.innerHTML = recipeListHtml(arr, k); }
     if (tab === 'saved') { arr = [...S.favs].sort((a, b) => (b.uses || 0) - (a.uses || 0)); pane.innerHTML = listHtml(arr); }
-    if (tab === 'quick') pane.innerHTML = `<div class="card"><label class="f">Name</label><input class="field" id="qn" placeholder="e.g. Chicken salad"><div class="row"><div class="grow"><label class="f">Calories</label><input class="field" id="qk" type="number" inputmode="numeric"></div><div class="grow"><label class="f">Protein (g)</label><input class="field" id="qp" type="number" inputmode="decimal"></div></div>
+    if (tab === 'quick') pane.innerHTML = `<button class="btn block" data-a="photo" style="display:flex;justify-content:center;gap:8px;margin-bottom:10px">${ic('cam')} Estimate from a photo</button><div class="card"><label class="f">Name</label><input class="field" id="qn" placeholder="e.g. Chicken salad"><div class="row"><div class="grow"><label class="f">Calories</label><input class="field" id="qk" type="number" inputmode="numeric"></div><div class="grow"><label class="f">Protein (g)</label><input class="field" id="qp" type="number" inputmode="decimal"></div></div>
       <label class="f">Serving (optional)</label><input class="field" id="qs" placeholder="e.g. 1 bowl"><label class="row small" style="margin-top:10px"><input type="checkbox" id="qf" checked> Save to Saved foods</label><button class="btn block" style="margin-top:12px" data-a="qadd">Add</button></div>`;
     if (tab === 'search') pane.innerHTML = `<div class="card"><div class="row"><input class="field grow" id="sq" placeholder="Search Open Food Facts" enterkeyhint="search"><button class="btn" data-a="sgo">${ic('search')}</button></div><p class="muted tiny">Needs a connection. Packaged foods mostly; for fresh foods use Quick.</p><div id="sr"></div></div>`;
     if (tab === 'scan') pane.innerHTML = `<div class="card"><video class="cam" id="cam" playsinline muted></video><div class="row" style="margin-top:8px"><button class="btn grow" data-a="camon">${ic('cam')} Scan barcode</button></div>
@@ -75,6 +75,7 @@ function openAddFood(k, meal) {
         if (!item.kcal && !item.protein) return toast('Enter calories or protein');
         await addFood(k, curMeal(), item, 1); if ($('#qf', el).checked) await saveFav(item); toast(`Added ${item.name}`); draw(); render(); break;
       }
+      case 'photo': PHOTO.open(k, curMeal(), () => { render(); }); break;
       case 'sgo': searchOFF($('#sq', el).value, $('#sr', el)); break;
       case 'bcgo': lookupBarcode($('#bc', el).value.trim(), $('#br', el)); break;
       case 'camon': scanBarcode($('#cam', el), (code) => { $('#bc', el).value = code; lookupBarcode(code, $('#br', el)); }); break;
@@ -721,7 +722,8 @@ async function openSettings() {
         <button data-a="recipes"><div class="grow">Recipes<div class="sub">${S.recipes.length} saved</div></div>${ic('chev')}</button>
         <label><div class="grow">Import recipes and foods<div class="sub">the Waypoint food library .json file</div></div><input type="file" accept=".json,application/json" id="ri" style="width:120px"></label></div>
       <div class="sect">Sync</div><div class="card list">
-        <button data-a="sync"><div class="grow">Apple Health sync<div class="sub">workouts and readings by Shortcut; Strava through Health</div></div>${ic('chev')}</button></div>
+        <button data-a="sync"><div class="grow">Apple Health sync<div class="sub">workouts and readings by Shortcut; Strava through Health</div></div>${ic('chev')}</button>
+        <button data-a="photokey"><div class="grow">Photo estimates<div class="sub">Claude reads a meal photo; your Anthropic API key</div></div>${ic('chev')}</button></div>
       <div class="sect">Data</div><div class="card list">
         <label><div class="grow">Import from Apple Health<div class="sub">${S.lastImport ? `Last: ${esc(fmtShort(dayKey(new Date(S.lastImport.at))))}. ${esc(S.lastImport.summary.replace(/^Imported /, '').replace(/ \(last 12 months\)\.$/, ''))}` : 'export.zip or export.xml from the Health app export'}</div></div><input type="file" accept=".xml,text/xml,application/xml,.zip" id="hk" style="width:120px"></label>
         <label><div class="grow">Import weight history (CSV)<div class="sub">${S.lastWImport ? `Last: ${esc(fmtShort(dayKey(new Date(S.lastWImport.at))))}. ${esc(S.lastWImport.summary)}` : 'a file with date and weight columns, such as a MyFitnessPal history'}</div></div><input type="file" accept=".csv,text/csv,text/plain" id="wi" style="width:120px"></label>
@@ -750,6 +752,7 @@ async function openSettings() {
       case 'schedule': openSchedule(); break;
       case 'level': openLevelPick(); break;
       case 'sync': WSYNC.openSettingsSheet(); break;
+      case 'photokey': PHOTO.openKeySheet(); break;
       case 'recipes': openRecipes(); break;
       case 'backup': doBackup(); break;
       case 'csv': doCSV(); break;
@@ -907,6 +910,7 @@ function offerFile(blob, name, detail, onSaved) {
 async function buildBackup() {
   const data = { app: 'Waypoint', version: APP_VERSION, exported: new Date().toISOString() };
   for (const s of STORES) data[s] = await DB.all(s);
+  data.meta = data.meta.filter((m) => m.key !== 'anthropicKey'); // the API key never leaves the phone
   return new Blob([JSON.stringify(data)], { type: 'application/json' });
 }
 async function doBackup() {
@@ -918,6 +922,7 @@ async function restoreBackup(file) {
     const data = JSON.parse(await file.text());
     if (data.app !== 'Waypoint') return toast('That is not a Waypoint backup');
     if (!confirm(`Restore the backup from ${new Date(data.exported).toLocaleDateString()}? Records in it are merged with what is on this phone; matching records are replaced.`)) return;
+    if (Array.isArray(data.meta)) data.meta = data.meta.filter((m) => m.key !== 'anthropicKey');
     for (const s of STORES) if (Array.isArray(data[s]) && data[s].length) await DB.putMany(s, data[s]);
     await loadAll(); render(); toast('Backup restored');
   } catch (e) { toast('Restore failed: ' + e.message, 5000); }
